@@ -423,7 +423,7 @@ provider:
 - 不把 Provider API Key 暴露给客户端；客户端 key 与上游 key 分开配置。
 - 日志默认脱敏 `Authorization`、tool arguments 中的密钥形态字段、图片/文件 base64。
 - 请求和响应都记录 trace id，但不记录完整 prompt，除非开启安全审计模式。
-- `.gitignore` 已忽略 `helloagents/`、`.codex`、`.claude`、`AGENTS.md`、`CLAUDE.md` 等 Agent 本地路径，发布包只包含产品代码和文档。
+- `.gitignore` 已忽略 `helloagents/`、`.codex`、`.claude`、`AGENTS.md`、`CLAUDE.md`、`config.yml`、`config.yaml` 等本地路径和敏感配置，发布包只包含产品代码和示例配置。
 
 ## 最小实现顺序
 

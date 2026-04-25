@@ -4,24 +4,25 @@ Moon Bridge 是一个 OpenAI Responses 兼容转发层，对外提供 `/v1/respo
 
 ## 配置
 
-```bash
-export MOONBRIDGE_PROVIDER_BASE_URL="https://provider.example.com"
-export MOONBRIDGE_PROVIDER_API_KEY="your-provider-key"
-export MOONBRIDGE_MODEL_MAP="gpt-test=claude-test"
-export MOONBRIDGE_ADDR=":8080"
-```
-
-可选缓存配置：
+复制示例配置，并填入真实 Provider 信息：
 
 ```bash
-export MOONBRIDGE_CACHE_MODE="automatic" # off / automatic / explicit / hybrid
-export MOONBRIDGE_CACHE_TTL="5m"         # 5m / 1h
+cp config.example.yml config.yml
 ```
+
+`config.yml` 包含 Provider API Key，已被 `.gitignore` 忽略，不要提交。
+`provider.models` 里建议保留 `moonbridge` 这个模型别名，Codex 验证脚本和 E2E 会优先使用它。
 
 ## 运行
 
 ```bash
 go run ./cmd/moonbridge
+```
+
+指定配置文件或临时覆盖监听地址：
+
+```bash
+go run ./cmd/moonbridge --config ./config.yml --addr 127.0.0.1:8080
 ```
 
 ## 调用
@@ -72,13 +73,7 @@ CGO_ENABLED=0 GOCACHE="$(pwd)/.cache/go-build" go test ./...
 
 ## E2E 测试
 
-`.env.test` 放真实 Provider 配置，已被 `.gitignore` 忽略：
-
-```bash
-ANTHROPIC_MESSAGE_BASE_URL="https://provider.example.com"
-ANTHROPIC_API_KEY="your-provider-key"
-ANTHROPIC_MODEL_NAME="provider-model"
-```
+真实 Provider 配置读取 `config.yml`，该文件已被 `.gitignore` 忽略。测试会优先使用 `provider.models.e2e-model`，没有时使用 `provider.models.moonbridge`。
 
 运行真实 Provider E2E：
 
@@ -86,8 +81,45 @@ ANTHROPIC_MODEL_NAME="provider-model"
 CGO_ENABLED=0 GOCACHE="$(pwd)/.cache/go-build" go test -tags=e2e ./internal/e2e
 ```
 
-缓存 E2E 会产生额外 token 成本，默认跳过；需要时在 `.env.test` 加：
+缓存 E2E 会产生额外 token 成本，默认跳过；需要时设置：
 
 ```bash
-MOONBRIDGE_E2E_CACHE=1
+MOONBRIDGE_E2E_CACHE=1 CGO_ENABLED=0 GOCACHE="$(pwd)/.cache/go-build" go test -tags=e2e ./internal/e2e
+```
+
+## Codex 端到端验证
+
+脚本会读取 `config.yml`，自动启动 Moon Bridge，并用临时 `CODEX_HOME=./verify-codex-home` 运行 Codex，不修改全局 `~/.codex` 配置。`./verify-codex-home` 已被 `.gitignore` 忽略。
+
+启动交互式 Codex TUI，在里面实际让 Codex 跑测试：
+
+```bash
+./scripts/verify-codex-tui.sh
+```
+
+也可以带一个初始任务进入 TUI：
+
+```bash
+./scripts/verify-codex-tui.sh '请运行 CGO_ENABLED=0 GOCACHE="$(pwd)/.cache/go-build" go test ./... 并汇报结果'
+```
+
+非交互 smoke test：
+
+```bash
+./scripts/verify-codex.sh
+```
+
+自定义提示词：
+
+```bash
+./scripts/verify-codex.sh "Reply exactly: moonbridge codex ok"
+```
+
+可选环境变量：
+
+```bash
+MOONBRIDGE_VERIFY_PORT=18081 ./scripts/verify-codex.sh
+MOONBRIDGE_VERIFY_MODEL_ALIAS=moonbridge ./scripts/verify-codex.sh
+MOONBRIDGE_CONFIG="$(pwd)/config.yml" ./scripts/verify-codex.sh
+CODEX_HOME="$(pwd)/verify-codex-home" ./scripts/verify-codex.sh
 ```

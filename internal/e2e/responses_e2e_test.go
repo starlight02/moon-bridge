@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,11 +25,11 @@ import (
 )
 
 func TestResponsesTextE2E(t *testing.T) {
-	env := loadE2EEnv(t)
-	handler := newE2EHandler(env)
+	e2eConfig := loadE2EConfig(t)
+	handler := newE2EHandler(e2eConfig.Config)
 
 	response := postResponses(t, handler, map[string]any{
-		"model":             "e2e-model",
+		"model":             e2eConfig.ModelAlias,
 		"instructions":      "Reply briefly. Do not use Markdown.",
 		"input":             "Reply with the words Moon Bridge e2e ok.",
 		"max_output_tokens": 64,
@@ -46,11 +48,11 @@ func TestResponsesTextE2E(t *testing.T) {
 }
 
 func TestResponsesFunctionToolE2E(t *testing.T) {
-	env := loadE2EEnv(t)
-	handler := newE2EHandler(env)
+	e2eConfig := loadE2EConfig(t)
+	handler := newE2EHandler(e2eConfig.Config)
 
 	response := postResponses(t, handler, map[string]any{
-		"model": "e2e-model",
+		"model": e2eConfig.ModelAlias,
 		"input": "Use the lookup_weather tool for Paris. Do not answer directly.",
 		"tools": []map[string]any{
 			{
@@ -84,11 +86,11 @@ func TestResponsesFunctionToolE2E(t *testing.T) {
 }
 
 func TestResponsesPromptCacheE2E(t *testing.T) {
-	env := loadE2EEnv(t)
-	if env["MOONBRIDGE_E2E_CACHE"] != "1" {
-		t.Skip("set MOONBRIDGE_E2E_CACHE=1 in .env.test to run cache-costing e2e")
+	e2eConfig := loadE2EConfig(t)
+	if os.Getenv("MOONBRIDGE_E2E_CACHE") != "1" {
+		t.Skip("set MOONBRIDGE_E2E_CACHE=1 to run cache-costing e2e")
 	}
-	handler := newE2EHandlerWithCache(env, config.CacheConfig{
+	handler := newE2EHandlerWithCache(e2eConfig.Config, config.CacheConfig{
 		Mode:                     "explicit",
 		TTL:                      "5m",
 		PromptCaching:            true,
@@ -102,7 +104,7 @@ func TestResponsesPromptCacheE2E(t *testing.T) {
 
 	longContext := strings.Repeat("Moon Bridge cache prefix stability sentence. ", 900)
 	request := map[string]any{
-		"model":             "e2e-model",
+		"model":             e2eConfig.ModelAlias,
 		"instructions":      longContext,
 		"input":             "Answer with one short sentence.",
 		"prompt_cache_key":  "moonbridge-e2e-cache",
@@ -117,31 +119,23 @@ func TestResponsesPromptCacheE2E(t *testing.T) {
 	}
 }
 
-func newE2EHandler(env map[string]string) http.Handler {
-	return newE2EHandlerWithCache(env, config.CacheConfig{Mode: "off"})
+type e2eConfig struct {
+	Config     config.Config
+	ModelAlias string
 }
 
-func newE2EHandlerWithCache(env map[string]string, cacheConfig config.CacheConfig) http.Handler {
-	providerBaseURL := firstNonEmpty(env["MOONBRIDGE_PROVIDER_BASE_URL"], env["ANTHROPIC_MESSAGE_BASE_URL"])
-	providerAPIKey := firstNonEmpty(env["MOONBRIDGE_PROVIDER_API_KEY"], env["ANTHROPIC_API_KEY"])
-	providerModel := firstNonEmpty(env["MOONBRIDGE_E2E_MODEL"], env["ANTHROPIC_MODEL_NAME"])
-	providerVersion := firstNonEmpty(env["MOONBRIDGE_PROVIDER_VERSION"], env["ANTHROPIC_VERSION"], "2023-06-01")
+func newE2EHandler(cfg config.Config) http.Handler {
+	return newE2EHandlerWithCache(cfg, config.CacheConfig{Mode: "off"})
+}
 
-	cfg := config.Config{
-		ProviderBaseURL:  providerBaseURL,
-		ProviderAPIKey:   providerAPIKey,
-		ProviderVersion:  providerVersion,
-		DefaultMaxTokens: 128,
-		ModelMap:         map[string]string{"e2e-model": providerModel},
-		Cache:            cacheConfig,
-	}
-
+func newE2EHandlerWithCache(cfg config.Config, cacheConfig config.CacheConfig) http.Handler {
+	cfg.Cache = cacheConfig
 	return server.New(server.Config{
 		Bridge: bridge.New(cfg, cache.NewMemoryRegistry()),
 		Provider: anthropic.NewClient(anthropic.ClientConfig{
-			BaseURL: providerBaseURL,
-			APIKey:  providerAPIKey,
-			Version: providerVersion,
+			BaseURL: cfg.ProviderBaseURL,
+			APIKey:  cfg.ProviderAPIKey,
+			Version: cfg.ProviderVersion,
 		}),
 	})
 }
@@ -204,23 +198,48 @@ func cacheCreationTokens(response map[string]any) int {
 	return numberAsInt(providerUsage["cache_creation_input_tokens"])
 }
 
-func loadE2EEnv(t *testing.T) map[string]string {
+func loadE2EConfig(t *testing.T) e2eConfig {
 	t.Helper()
 
-	root := findProjectRoot(t)
-	values, err := parseDotenv(filepath.Join(root, ".env.test"))
+	configPath := os.Getenv("MOONBRIDGE_CONFIG")
+	if configPath == "" {
+		configPath = filepath.Join(findProjectRoot(t), config.DefaultConfigPath)
+	}
+
+	cfg, err := config.LoadFromFile(configPath)
 	if errors.Is(err, os.ErrNotExist) {
-		t.Skip(".env.test not found")
+		t.Skipf("config file %s not found", configPath)
 	}
 	if err != nil {
-		t.Fatalf("parse .env.test error = %v", err)
+		t.Fatalf("load e2e config %s error = %v", configPath, err)
 	}
-	for _, key := range []string{"ANTHROPIC_MESSAGE_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL_NAME"} {
-		if strings.TrimSpace(values[key]) == "" {
-			t.Fatalf("%s is required in .env.test", key)
+
+	modelAlias, err := e2eModelAlias(cfg.ModelMap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e2eConfig{Config: cfg, ModelAlias: modelAlias}
+}
+
+func e2eModelAlias(models map[string]string) (string, error) {
+	if mapped := strings.TrimSpace(models["e2e-model"]); mapped != "" {
+		return "e2e-model", nil
+	}
+	if mapped := strings.TrimSpace(models["moonbridge"]); mapped != "" {
+		return "moonbridge", nil
+	}
+
+	aliases := make([]string, 0, len(models))
+	for alias, mapped := range models {
+		if strings.TrimSpace(alias) != "" && strings.TrimSpace(mapped) != "" {
+			aliases = append(aliases, alias)
 		}
 	}
-	return values
+	if len(aliases) == 0 {
+		return "", fmt.Errorf("provider.models must contain at least one non-empty model mapping")
+	}
+	slices.Sort(aliases)
+	return aliases[0], nil
 }
 
 func findProjectRoot(t *testing.T) string {
@@ -240,39 +259,6 @@ func findProjectRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
-}
-
-func parseDotenv(path string) (map[string]string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	values := map[string]string{}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		value = strings.Trim(value, `"'`)
-		values[key] = value
-	}
-	return values, nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func numberAsInt(value any) int {

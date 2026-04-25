@@ -1,21 +1,27 @@
 package config_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"moonbridge/internal/config"
 )
 
-func TestLoadFromMapParsesDefaultsAndModelMap(t *testing.T) {
-	cfg, err := config.LoadFromMap(map[string]string{
-		"MOONBRIDGE_PROVIDER_BASE_URL": "https://provider.example.test",
-		"MOONBRIDGE_PROVIDER_API_KEY":  "upstream-key",
-		"MOONBRIDGE_MODEL_MAP":         "gpt-test=claude-test,gpt-fast=claude-fast",
-		"MOONBRIDGE_CACHE_MODE":        "explicit",
-		"MOONBRIDGE_CACHE_TTL":         "1h",
-	})
+func TestLoadFromYAMLParsesDefaultsAndModelMap(t *testing.T) {
+	cfg, err := config.LoadFromYAML([]byte(`
+provider:
+  base_url: https://provider.example.test
+  api_key: upstream-key
+  models:
+    gpt-test: claude-test
+    gpt-fast: claude-fast
+cache:
+  mode: explicit
+  ttl: 1h
+`))
 	if err != nil {
-		t.Fatalf("LoadFromMap() error = %v", err)
+		t.Fatalf("LoadFromYAML() error = %v", err)
 	}
 
 	if cfg.Addr != ":8080" {
@@ -35,20 +41,67 @@ func TestLoadFromMapParsesDefaultsAndModelMap(t *testing.T) {
 	}
 }
 
-func TestLoadFromMapRequiresProviderSettings(t *testing.T) {
-	_, err := config.LoadFromMap(map[string]string{})
+func TestLoadFromYAMLRequiresProviderSettings(t *testing.T) {
+	_, err := config.LoadFromYAML([]byte(`{}`))
 	if err == nil {
-		t.Fatal("LoadFromMap() error = nil, want missing provider settings error")
+		t.Fatal("LoadFromYAML() error = nil, want missing provider settings error")
 	}
 }
 
-func TestLoadFromMapRejectsInvalidCacheTTL(t *testing.T) {
-	_, err := config.LoadFromMap(map[string]string{
-		"MOONBRIDGE_PROVIDER_BASE_URL": "https://provider.example.test",
-		"MOONBRIDGE_PROVIDER_API_KEY":  "upstream-key",
-		"MOONBRIDGE_CACHE_TTL":         "24h",
-	})
+func TestLoadFromYAMLRejectsInvalidCacheTTL(t *testing.T) {
+	_, err := config.LoadFromYAML([]byte(`
+provider:
+  base_url: https://provider.example.test
+  api_key: upstream-key
+  models:
+    gpt-test: claude-test
+cache:
+  ttl: 24h
+`))
 	if err == nil {
-		t.Fatal("LoadFromMap() error = nil, want invalid cache TTL error")
+		t.Fatal("LoadFromYAML() error = nil, want invalid cache TTL error")
+	}
+}
+
+func TestLoadFromYAMLRejectsEmptyModelMapping(t *testing.T) {
+	_, err := config.LoadFromYAML([]byte(`
+provider:
+  base_url: https://provider.example.test
+  api_key: upstream-key
+  models:
+    moonbridge: ""
+`))
+	if err == nil {
+		t.Fatal("LoadFromYAML() error = nil, want empty model mapping error")
+	}
+}
+
+func TestLoadFromEnvUsesMoonBridgeConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(path, []byte(`
+server:
+  addr: 127.0.0.1:9999
+provider:
+  base_url: https://provider.example.test
+  api_key: upstream-key
+  models:
+    moonbridge: claude-test
+cache:
+  mode: off
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	t.Setenv("MOONBRIDGE_CONFIG", path)
+	cfg, err := config.LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv() error = %v", err)
+	}
+	if cfg.Addr != "127.0.0.1:9999" {
+		t.Fatalf("Addr = %q", cfg.Addr)
+	}
+	if cfg.Cache.Mode != "off" {
+		t.Fatalf("Cache.Mode = %q", cfg.Cache.Mode)
 	}
 }

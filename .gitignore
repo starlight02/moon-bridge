@@ -25,6 +25,12 @@ CLAUDE.md
 .roo
 .roo/
 .mcp.json
+verify-codex-home
+verify-codex-home/
 
 # dotenv files
 .env.test
+
+# local runtime config with provider secrets
+config.yml
+config.yaml
