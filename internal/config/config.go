@@ -27,6 +27,8 @@ type Config struct {
 	Mode              Mode
 	Addr              string
 	TraceRequests     bool
+	LogLevel          string
+	LogFormat         string
 	DefaultModel      string
 	ProviderBaseURL   string
 	ProviderAPIKey    string
@@ -76,6 +78,7 @@ type ProviderModelConfig struct {
 type FileConfig struct {
 	Mode          string              `yaml:"mode"`
 	TraceRequests bool                `yaml:"trace_requests"`
+	Log           LogFileConfig       `yaml:"log"`
 	Server        ServerFileConfig    `yaml:"server"`
 	Provider      ProviderFileConfig  `yaml:"provider"`
 	Cache         CacheFileConfig     `yaml:"cache"`
@@ -176,6 +179,8 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 		Mode:              mode,
 		Addr:              valueOrDefault(strings.TrimSpace(fileConfig.Server.Addr), DefaultAddr),
 		TraceRequests:     fileConfig.TraceRequests,
+		LogLevel:          valueOrDefault(strings.TrimSpace(fileConfig.Log.Level), "info"),
+		LogFormat:         valueOrDefault(strings.TrimSpace(fileConfig.Log.Format), "text"),
 		DefaultModel:      strings.TrimSpace(fileConfig.Provider.DefaultModel),
 		ProviderBaseURL:   strings.TrimRight(strings.TrimSpace(fileConfig.Provider.BaseURL), "/"),
 		ProviderAPIKey:    strings.TrimSpace(fileConfig.Provider.APIKey),
@@ -400,3 +405,7 @@ func providerModelMap(models map[string]ProviderModelConfig) map[string]string {
 	}
 	return normalized
 }
+	type LogFileConfig struct {
+		Level  string `yaml:"level"`
+		Format string `yaml:"format"`
+	}

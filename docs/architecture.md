@@ -169,5 +169,6 @@ Anthropic Messages API 要求轮次内 `tool_use` block 不能跨消息分割。
 
 - `namespace` 工具展平：`mcp__deepwiki__ask_question` 样式，匹配 Codex 回收 function call 时的命名格式。
 - DeepWiki 确认 Codex 内置 grammar/freeform 工具主要是 `apply_patch` 和 Code Mode `exec`；Moon Bridge 依赖 `format.definition` 识别 grammar kind，而不是只看工具名。
-- `apply_patch` 在 Anthropic 侧暴露为 `operations` schema，响应时拼回 `*** Begin Patch` / `*** End Patch` raw grammar；内部仍接受 `raw_patch` 作为历史容错，但不在 schema 中暴露。
+- `apply_patch` 在 Anthropic 侧暴露为 `operations` schema，响应时拼回 `*** Begin Patch` / `*** End Patch` raw grammar；`update_file` 携带 `content` 时会转成 `Delete File` + `Add File` 的整文件替换，避免生成空 Update hunk。内部仍接受 `raw_patch` 作为历史容错，但不在 schema 中暴露。
 - Code Mode `exec` 在 Anthropic 侧暴露为 `{source: string}` schema，响应时把 `source` 原样拼回 Codex custom tool input。
+- DeepWiki / MCP 的具体使用约束属于代理提示词层，由 `AGENTS.md` 管理；Transform 层只负责按协议展平和转发工具定义，不改写 MCP 工具说明。

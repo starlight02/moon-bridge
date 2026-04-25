@@ -11,6 +11,7 @@ import (
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
+	"moonbridge/internal/logger"
 	"moonbridge/internal/proxy"
 	"moonbridge/internal/server"
 	mbtrace "moonbridge/internal/trace"
@@ -37,10 +38,13 @@ func RunServerFromEnv(ctx context.Context, errors io.Writer) error {
 func RunServer(ctx context.Context, cfg config.Config, errors io.Writer) error {
 	switch cfg.Mode {
 	case config.ModeTransform:
+		logger.Info("starting server", "mode", cfg.Mode, "addr", cfg.Addr)
 		return runTransform(ctx, cfg, errors)
 	case config.ModeCaptureResponse:
+		logger.Info("starting server", "mode", cfg.Mode, "addr", cfg.Addr)
 		return runCaptureResponse(ctx, cfg, errors)
 	case config.ModeCaptureAnthropic:
+		logger.Info("starting server", "mode", cfg.Mode, "addr", cfg.Addr)
 		return runCaptureAnthropic(ctx, cfg, errors)
 	default:
 		return fmt.Errorf("unsupported mode %q", cfg.Mode)
@@ -81,6 +85,7 @@ func runCaptureResponse(ctx context.Context, cfg config.Config, errors io.Writer
 	if err != nil {
 		return err
 	}
+	logger.Info("response proxy initialized", "upstream", cfg.ResponseProxy.ProviderBaseURL)
 	return runHTTPServer(ctx, cfg.Addr, handler, errors)
 }
 
@@ -97,6 +102,7 @@ func runCaptureAnthropic(ctx context.Context, cfg config.Config, errors io.Write
 	if err != nil {
 		return err
 	}
+	logger.Info("anthropic proxy initialized", "upstream", cfg.AnthropicProxy.ProviderBaseURL)
 	return runHTTPServer(ctx, cfg.Addr, handler, errors)
 }
 
@@ -105,6 +111,7 @@ func logTrace(errors io.Writer, label string, tracer *mbtrace.Tracer) {
 		fmt.Fprintf(errors, "%s trace disabled\n", label)
 		return
 	}
+	logger.Info("trace enabled", "label", label, "dir", tracer.Directory())
 	fmt.Fprintf(errors, "%s trace enabled at %s\n", label, tracer.Directory())
 }
 
@@ -131,6 +138,7 @@ func runHTTPServer(ctx context.Context, addr string, handler http.Handler, error
 	errCh := make(chan error, 1)
 	go func() {
 		fmt.Fprintf(errors, "%s listening on %s\n", Name, addr)
+		logger.Info("http server listening", "addr", addr)
 		errCh <- httpServer.ListenAndServe()
 	}()
 
@@ -143,8 +151,9 @@ func runHTTPServer(ctx context.Context, addr string, handler http.Handler, error
 		if err == http.ErrServerClosed {
 			return nil
 		}
+		logger.Error("http server error", "error", err)
 		return err
-	}
+}
 }
 
 type anthropicClientWrapper struct {

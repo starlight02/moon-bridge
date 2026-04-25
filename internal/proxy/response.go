@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"io"
+	"moonbridge/internal/logger"
 	"net/http"
 
 	mbtrace "moonbridge/internal/trace"
@@ -47,8 +48,11 @@ func (server *ResponseServer) ServeHTTP(writer http.ResponseWriter, request *htt
 }
 
 func (server *ResponseServer) serveProxy(writer http.ResponseWriter, request *http.Request) {
+	log := logger.L().With("path", request.URL.Path, "method", request.Method)
+	log.Debug("proxy request received")
 	requestBody, err := io.ReadAll(request.Body)
 	if err != nil {
+		log.Error("failed to read request body", "error", err)
 		http.Error(writer, "failed to read request body", http.StatusBadRequest)
 		return
 	}
@@ -78,6 +82,7 @@ func (server *ResponseServer) serveProxy(writer http.ResponseWriter, request *ht
 
 	upstreamResponse, err := server.client.Do(upstreamRequest)
 	if err != nil {
+		log.Error("upstream request failed", "error", err)
 		record.Error = map[string]string{"stage": "upstream_request", "message": err.Error()}
 		writeTrace(server.tracer, server.traceErrors, record)
 		http.Error(writer, err.Error(), http.StatusBadGateway)
@@ -96,8 +101,10 @@ func (server *ResponseServer) serveProxy(writer http.ResponseWriter, request *ht
 		Body:       mbtrace.RawJSONOrString(responseBody.Bytes()),
 	}
 	if copyErr != nil {
+		log.Error("copy upstream response failed", "error", copyErr)
 		record.Error = map[string]string{"stage": "copy_upstream_response", "message": copyErr.Error()}
 	}
+	log.Info("proxy response", "status", upstreamResponse.StatusCode, "bytes", responseBody.Len())
 	writeTrace(server.tracer, server.traceErrors, record)
 }
 

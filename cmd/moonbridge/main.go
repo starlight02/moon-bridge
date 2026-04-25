@@ -9,6 +9,7 @@ import (
 
 	"moonbridge/internal/app"
 	"moonbridge/internal/config"
+	"moonbridge/internal/logger"
 )
 
 func main() {
@@ -34,6 +35,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := logger.Init(logger.Config{Level: logger.Level(cfg.LogLevel), Format: cfg.LogFormat, Output: os.Stderr}); err != nil {
+		log.Fatal(err)
+	}
+	logger.Info("config loaded", "path", *configPath, "mode", cfg.Mode, "addr", cfg.Addr)
 	if *mode != "" {
 		cfg.Mode = config.Mode(*mode)
 		if err := cfg.Validate(); err != nil {

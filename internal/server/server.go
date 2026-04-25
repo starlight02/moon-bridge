@@ -10,6 +10,7 @@ import (
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/openai"
+	"moonbridge/internal/logger"
 	mbtrace "moonbridge/internal/trace"
 )
 
@@ -51,7 +52,10 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 }
 
 func (server *Server) handleResponses(writer http.ResponseWriter, request *http.Request) {
+	logger := logger.L().With("path", request.URL.Path, "method", request.Method, "remote", request.RemoteAddr)
+	logger.Debug("request received")
 	if request.Method != http.MethodPost {
+		logger.Warn("method not allowed", "method", request.Method)
 		writeOpenAIError(writer, http.StatusMethodNotAllowed, openai.ErrorResponse{Error: openai.ErrorObject{
 			Message: "method not allowed",
 			Type:    "invalid_request_error",
@@ -63,6 +67,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	body, err := io.ReadAll(request.Body)
 	record := mbtrace.Record{HTTPRequest: mbtrace.NewHTTPRequest(request), OpenAIRequest: mbtrace.RawJSONOrString(body)}
 	if err != nil {
+		logger.Error("failed to read request body", "error", err)
 		payload := openai.ErrorResponse{Error: openai.ErrorObject{
 			Message: "failed to read request body",
 			Type:    "invalid_request_error",
@@ -77,6 +82,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 
 	var responsesRequest openai.ResponsesRequest
 	if err := json.Unmarshal(body, &responsesRequest); err != nil {
+		logger.Warn("invalid JSON request body", "error", err)
 		payload := openai.ErrorResponse{Error: openai.ErrorObject{
 			Message: "invalid JSON request body",
 			Type:    "invalid_request_error",
@@ -93,6 +99,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	conversionContext := server.bridge.ConversionContext(responsesRequest)
 	record.AnthropicRequest = anthropicRequest
 	if err != nil {
+		logger.Warn("failed to convert to anthropic", "error", err)
 		status, payload := server.bridge.ErrorResponse(err)
 		record.Error = traceError("convert_to_anthropic", err)
 		record.OpenAIResponse = payload
@@ -102,12 +109,15 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	}
 
 	if responsesRequest.Stream {
+		logger.Debug("handling streaming request", "model", responsesRequest.Model)
 		server.handleStream(writer, request, responsesRequest, anthropicRequest, record)
 		return
 	}
 
+	logger.Debug("sending non-streaming request to provider", "model", anthropicRequest.Model)
 	anthropicResponse, err := server.provider.CreateMessage(request.Context(), anthropicRequest)
 	if err != nil {
+		logger.Error("provider create message failed", "error", err)
 		status, payload := server.bridge.ErrorResponse(err)
 		record.Error = traceError("provider_create_message", err)
 		record.OpenAIResponse = payload
@@ -117,6 +127,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	}
 
 	openAIResponse := server.bridge.FromAnthropicWithPlanAndContext(anthropicResponse, responsesRequest.Model, plan, conversionContext)
+	logger.Info("request completed", "model", responsesRequest.Model, "status", "ok", "input_tokens", anthropicResponse.Usage.InputTokens, "output_tokens", anthropicResponse.Usage.OutputTokens)
 	record.AnthropicResponse = anthropicResponse
 	record.OpenAIResponse = openAIResponse
 	server.writeTrace(record)
@@ -124,8 +135,11 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 }
 
 func (server *Server) handleStream(writer http.ResponseWriter, request *http.Request, responsesRequest openai.ResponsesRequest, anthropicRequest anthropic.MessageRequest, record mbtrace.Record) {
+	logger := logger.L().With("model", responsesRequest.Model)
+	logger.Debug("starting stream")
 	stream, err := server.provider.StreamMessage(request.Context(), anthropicRequest)
 	if err != nil {
+		logger.Error("provider stream message failed", "error", err)
 		status, payload := server.bridge.ErrorResponse(err)
 		record.Error = traceError("provider_stream_message", err)
 		record.OpenAIResponse = payload
@@ -148,6 +162,7 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 		if err != nil {
 			events = append(events, anthropic.StreamEvent{Type: "error", Error: &anthropic.ErrorObject{Type: "provider_stream_error", Message: err.Error()}})
 			record.Error = traceError("provider_stream_next", err)
+			logger.Error("stream read error", "error", err)
 			break
 		}
 		events = append(events, event)
@@ -161,6 +176,7 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 	for _, event := range openAIEvents {
 		writeSSE(writer, event)
 	}
+	logger.Info("stream completed", "model", responsesRequest.Model, "events", len(openAIEvents))
 }
 
 func (server *Server) writeTrace(record mbtrace.Record) {

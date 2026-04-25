@@ -1,5 +1,8 @@
 mode: "Transform" # Transform / CaptureAnthropic / CaptureResponse
 
+log:
+  level: "info"  # debug / info / warn / error
+  format: "text" # text / json
 server:
   addr: "127.0.0.1:38440"
 

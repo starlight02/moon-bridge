@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"moonbridge/internal/logger"
 )
 
 const DefaultRoot = "trace"
@@ -139,6 +141,7 @@ func (tracer *Tracer) WriteNumbered(category string, requestNumber uint64, recor
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return "", err
 	}
+	logger.Debug("trace written", "path", path, "category", category, "request_number", requestNumber)
 	return path, nil
 }
 

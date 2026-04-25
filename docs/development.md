@@ -112,8 +112,9 @@ go test ./internal/e2e/ -v -count=1
 - `namespace` 下的 `function` 子工具展平为 `namespace__tool`，如 `mcp__deepwiki__ask_question`。
 - `namespace` 下的 `custom` 子工具同样展平为 `namespace__tool`，保留 grammar 信息。
 - 查询 Codex 内部工具实现必须优先走 DeepWiki；当前确认需要 grammar/freeform 的内置 custom 工具主要是 `apply_patch` 和 Code Mode `exec`。
-- `apply_patch` 不直接暴露 raw grammar 给 Anthropic，而是转换成结构化 `operations` schema，响应回 Codex 前再拼回 raw patch grammar。
+- `apply_patch` 不直接暴露 raw grammar 给 Anthropic，而是转换成结构化 `operations` schema，响应回 Codex 前再拼回 raw patch grammar；`update_file + content` 代表整文件替换，会拼成 `Delete File` + `Add File`，不要生成空 `Update File` hunk。
 - Code Mode `exec` 转换成 `{source: string}` schema，响应回 Codex 前再把 `source` 原样作为 custom tool input。
+- MCP / DeepWiki 的使用偏好写在 `AGENTS.md`，不要写进 Transform 转换层；转换层只做协议映射，不注入项目特定提示词。
 - `web_search` 桥接使用 Anthropic `web_search_20250305` server tool，不被当成普通 function 处理。
 - `file_search`、`computer_use_preview`、`image_generation` 目前直接忽略。
 - `local_shell` 使用独立 schema 和 output item，不走 `function_call` 路径。

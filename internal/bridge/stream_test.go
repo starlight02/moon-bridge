@@ -210,6 +210,42 @@ func TestConvertStreamEventsBuildsApplyPatchGrammarFromProxyOperations(t *testin
 	}
 }
 
+func TestConvertStreamEventsBuildsApplyPatchReplacementFromUpdateContent(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Tools: []openai.Tool{{
+			Type:   "custom",
+			Name:   "apply_patch",
+			Format: map[string]any{"type": "grammar", "syntax": "lark", "definition": applyPatchGrammarForTest()},
+		}},
+	}
+	input := map[string]any{"operations": []map[string]any{{
+		"type":    "update_file",
+		"path":    "internal/app/app.go",
+		"content": "package app\n\nconst Name = \"Moon Bridge\"\n",
+	}}}
+	events := []anthropic.StreamEvent{
+		{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant"}},
+		{Type: "content_block_start", Index: 0, ContentBlock: &anthropic.ContentBlock{
+			Type: "tool_use",
+			ID:   "tool_patch",
+			Name: "apply_patch",
+		}},
+		{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "input_json_delta", PartialJSON: string(mustMarshalRaw(t, input))}},
+		{Type: "content_block_stop", Index: 0},
+		{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "tool_use"}},
+		{Type: "message_stop"},
+	}
+
+	bridgeUnderTest := testBridge()
+	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request))
+	completed := streamLifecycleResponse(t, converted, "response.completed")
+	want := "*** Begin Patch\n*** Delete File: internal/app/app.go\n*** Add File: internal/app/app.go\n+package app\n+\n+const Name = \"Moon Bridge\"\n*** End Patch"
+	if completed.Output[0].Input != want {
+		t.Fatalf("patch = %q, want %q", completed.Output[0].Input, want)
+	}
+}
+
 func TestConvertStreamEventsConvertsWebSearchServerToolUse(t *testing.T) {
 	events := []anthropic.StreamEvent{
 		{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant"}},

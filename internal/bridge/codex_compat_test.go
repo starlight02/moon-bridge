@@ -307,6 +307,11 @@ func TestToAnthropicConvertsApplyPatchGrammarToolToSchemaProxy(t *testing.T) {
 	if _, ok := properties["raw_patch"]; ok {
 		t.Fatalf("raw patch should not be exposed in apply_patch schema: %+v", properties)
 	}
+	operationSchema := properties["operations"].(map[string]any)["items"].(map[string]any)
+	operationProperties := operationSchema["properties"].(map[string]any)
+	if _, ok := operationProperties["changes"]; ok {
+		t.Fatalf("raw changes should not be exposed in apply_patch operation schema: %+v", operationProperties)
+	}
 	required, ok := converted.Tools[0].InputSchema["required"].([]string)
 	if !ok || len(required) != 1 || required[0] != "operations" {
 		t.Fatalf("required schema = %+v", converted.Tools[0].InputSchema["required"])
@@ -345,6 +350,40 @@ func TestFromAnthropicBuildsApplyPatchGrammarFromProxyOperations(t *testing.T) {
 		t.Fatalf("output = %+v", converted.Output)
 	}
 	want := "*** Begin Patch\n*** Add File: docs/api.md\n+# API\n+content\n*** End Patch"
+	if converted.Output[0].Input != want {
+		t.Fatalf("patch = %q, want %q", converted.Output[0].Input, want)
+	}
+}
+
+func TestFromAnthropicBuildsApplyPatchReplacementFromUpdateContent(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Tools: []openai.Tool{{
+			Type:   "custom",
+			Name:   "apply_patch",
+			Format: map[string]any{"type": "grammar", "syntax": "lark", "definition": applyPatchGrammarForTest()},
+		}},
+	}
+	response := anthropic.MessageResponse{
+		ID:         "msg_123",
+		Type:       "message",
+		Role:       "assistant",
+		StopReason: "tool_use",
+		Content: []anthropic.ContentBlock{{
+			Type: "tool_use",
+			ID:   "tool_patch",
+			Name: "apply_patch",
+			Input: mustMarshalRaw(t, map[string]any{"operations": []map[string]any{{
+				"type":    "update_file",
+				"path":    "internal/app/app.go",
+				"content": "package app\n\nconst Name = \"Moon Bridge\"\n",
+			}}}),
+		}},
+	}
+
+	bridgeUnderTest := testBridge()
+	converted := bridgeUnderTest.FromAnthropicWithContext(response, "gpt-test", bridgeUnderTest.ConversionContext(request))
+	want := "*** Begin Patch\n*** Delete File: internal/app/app.go\n*** Add File: internal/app/app.go\n+package app\n+\n+const Name = \"Moon Bridge\"\n*** End Patch"
 	if converted.Output[0].Input != want {
 		t.Fatalf("patch = %q, want %q", converted.Output[0].Input, want)
 	}

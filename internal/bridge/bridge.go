@@ -11,6 +11,7 @@ import (
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
+	"moonbridge/internal/logger"
 	"moonbridge/internal/openai"
 )
 
@@ -104,7 +105,10 @@ func New(cfg config.Config, registry *cache.MemoryRegistry) *Bridge {
 }
 
 func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest) (anthropic.MessageRequest, cache.CacheCreationPlan, error) {
+	log := logger.L().With("model", request.Model)
+	log.Debug("converting OpenAI request to Anthropic")
 	if request.Model == "" {
+		log.Warn("model is required")
 		return anthropic.MessageRequest{}, cache.CacheCreationPlan{}, invalidRequest("model is required", "model", "missing_required_parameter")
 	}
 
@@ -153,9 +157,11 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest) (anthropic.Me
 
 	plan, err := bridge.planCache(request, converted)
 	if err != nil {
+		log.Warn("cache planning failed", "error", err)
 		return anthropic.MessageRequest{}, cache.CacheCreationPlan{}, err
 	}
 	bridge.injectCacheControl(&converted, plan)
+	log.Debug("converted request", "anthropic_model", converted.Model, "max_tokens", converted.MaxTokens, "messages", len(converted.Messages), "tools", len(converted.Tools), "cache_mode", plan.Mode)
 
 	return converted, plan, nil
 }
@@ -173,12 +179,15 @@ func (bridge *Bridge) FromAnthropicWithPlan(response anthropic.MessageResponse, 
 }
 
 func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.MessageResponse, model string, plan cache.CacheCreationPlan, context ConversionContext) openai.Response {
+	log := logger.L().With("model", model)
+	log.Debug("converting Anthropic response to OpenAI", "provider_id", response.ID, "stop_reason", response.StopReason)
 	if plan.LocalKey != "" {
 		bridge.registry.UpdateFromUsage(plan.LocalKey, cache.UsageSignals{
 			InputTokens:              response.Usage.InputTokens,
 			CacheCreationInputTokens: response.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     response.Usage.CacheReadInputTokens,
 		}, response.Usage.InputTokens)
+		log.Debug("updated cache registry", "key", plan.LocalKey, "input_tokens", response.Usage.InputTokens, "cache_creation", response.Usage.CacheCreationInputTokens, "cache_read", response.Usage.CacheReadInputTokens)
 	}
 
 	output := make([]openai.OutputItem, 0, len(response.Content))
@@ -213,6 +222,7 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 				continue
 			}
 			if context.IsCustomTool(block.Name) {
+				log.Debug("custom tool call", "name", block.Name)
 				output = append(output, openai.OutputItem{
 					Type:   "custom_tool_call",
 					ID:     customToolItemID(block.ID),
@@ -233,6 +243,7 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 			})
 		case "server_tool_use":
 			if block.Name == "web_search" {
+				log.Debug("web search tool call")
 				action := webSearchActionFromRaw(block.Input)
 				if !hasWebSearchActionDetails(action) {
 					continue
@@ -266,6 +277,7 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 		metadata["provider_usage"] = response.Usage
 	}
 
+	log.Info("response converted", "output_items", len(output), "status", status)
 	return openai.Response{
 		ID:                responseID(response.ID),
 		Object:            "response",
@@ -573,7 +585,7 @@ func applyPatchProxySchema() map[string]any {
 					"properties": map[string]any{
 						"type": map[string]any{
 							"type":        "string",
-							"enum":        []string{"add_file", "delete_file", "update_file"},
+							"enum":        []string{"add_file", "delete_file", "update_file", "replace_file"},
 							"description": "Patch operation type.",
 						},
 						"path": map[string]any{"type": "string", "description": "Target file path."},
@@ -583,7 +595,7 @@ func applyPatchProxySchema() map[string]any {
 						},
 						"content": map[string]any{
 							"type":        "string",
-							"description": "For add_file: full file content without leading '+'.",
+							"description": "For add_file or replace_file: full file content without leading '+'. For update_file, use content only when replacing the whole file; Moon Bridge will reconstruct this as Delete File plus Add File.",
 						},
 						"hunks": map[string]any{
 							"type":        "array",
@@ -606,10 +618,6 @@ func applyPatchProxySchema() map[string]any {
 								},
 								"required": []string{"lines"},
 							},
-						},
-						"changes": map[string]any{
-							"type":        "string",
-							"description": "For update_file fallback: raw hunk body using @@ plus lines prefixed by space, + or -.",
 						},
 					},
 					"required": []string{"type", "path"},
@@ -738,19 +746,23 @@ func buildApplyPatchInput(operations []applyPatchOperation) string {
 	for _, operation := range operations {
 		switch operation.Type {
 		case "add_file", "add":
-			builder.WriteString("*** Add File: ")
-			builder.WriteString(operation.Path)
-			builder.WriteByte('\n')
-			for _, line := range splitPatchContentLines(operation.Content) {
-				builder.WriteByte('+')
-				builder.WriteString(line)
-				builder.WriteByte('\n')
-			}
+			writeApplyPatchAddFile(&builder, operation.Path, operation.Content)
 		case "delete_file", "delete":
 			builder.WriteString("*** Delete File: ")
 			builder.WriteString(operation.Path)
 			builder.WriteByte('\n')
+		case "replace_file", "replace":
+			writeApplyPatchReplaceFile(&builder, operation.Path, operation.Content)
 		case "update_file", "update":
+			if operation.Content != "" && len(operation.Hunks) == 0 && len(operation.Lines) == 0 && strings.TrimSpace(operation.Changes) == "" {
+				targetPath := operation.Path
+				if operation.MoveTo != "" {
+					targetPath = operation.MoveTo
+				}
+				writeApplyPatchDeleteFile(&builder, operation.Path)
+				writeApplyPatchAddFile(&builder, targetPath, operation.Content)
+				continue
+			}
 			builder.WriteString("*** Update File: ")
 			builder.WriteString(operation.Path)
 			builder.WriteByte('\n')
@@ -764,6 +776,28 @@ func buildApplyPatchInput(operations []applyPatchOperation) string {
 	}
 	builder.WriteString("*** End Patch")
 	return normalizeApplyPatchInput(builder.String())
+}
+
+func writeApplyPatchReplaceFile(builder *strings.Builder, path string, content string) {
+	writeApplyPatchDeleteFile(builder, path)
+	writeApplyPatchAddFile(builder, path, content)
+}
+
+func writeApplyPatchDeleteFile(builder *strings.Builder, path string) {
+	builder.WriteString("*** Delete File: ")
+	builder.WriteString(path)
+	builder.WriteByte('\n')
+}
+
+func writeApplyPatchAddFile(builder *strings.Builder, path string, content string) {
+	builder.WriteString("*** Add File: ")
+	builder.WriteString(path)
+	builder.WriteByte('\n')
+	for _, line := range splitPatchContentLines(content) {
+		builder.WriteByte('+')
+		builder.WriteString(line)
+		builder.WriteByte('\n')
+	}
 }
 
 func writeApplyPatchHunks(builder *strings.Builder, operation applyPatchOperation) {
