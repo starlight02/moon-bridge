@@ -16,6 +16,7 @@ provider:
   api_key: upstream-key
   user_agent: Bun/1.3.13
   web_search:
+    support: auto
     max_uses: 12
   default_model: gpt-test
   models:
@@ -49,6 +50,12 @@ trace_requests: true
 	if cfg.WebSearchMaxUses != 12 {
 		t.Fatalf("WebSearchMaxUses = %d", cfg.WebSearchMaxUses)
 	}
+	if cfg.WebSearchSupport != config.WebSearchSupportAuto {
+		t.Fatalf("WebSearchSupport = %q", cfg.WebSearchSupport)
+	}
+	if !cfg.WebSearchEnabled() {
+		t.Fatal("WebSearchEnabled() = false, want true")
+	}
 	if cfg.DefaultMaxTokens != 1024 {
 		t.Fatalf("DefaultMaxTokens = %d", cfg.DefaultMaxTokens)
 	}
@@ -67,6 +74,46 @@ trace_requests: true
 	providerModel := cfg.ProviderModelFor("gpt-test")
 	if providerModel.Name != "claude-test" || providerModel.ContextWindow != 200000 || providerModel.MaxOutputTokens != 100000 {
 		t.Fatalf("ProviderModelFor(gpt-test) = %+v", providerModel)
+	}
+}
+
+func TestLoadFromYAMLCanDisableWebSearch(t *testing.T) {
+	cfg, err := config.LoadFromYAML([]byte(`
+mode: Transform
+provider:
+  base_url: https://provider.example.test
+  api_key: upstream-key
+  web_search:
+    support: disabled
+  models:
+    moonbridge:
+      name: claude-test
+`))
+	if err != nil {
+		t.Fatalf("LoadFromYAML() error = %v", err)
+	}
+	if cfg.WebSearchSupport != config.WebSearchSupportDisabled {
+		t.Fatalf("WebSearchSupport = %q", cfg.WebSearchSupport)
+	}
+	if cfg.WebSearchEnabled() {
+		t.Fatal("WebSearchEnabled() = true, want false")
+	}
+}
+
+func TestLoadFromYAMLRejectsInvalidWebSearchSupport(t *testing.T) {
+	_, err := config.LoadFromYAML([]byte(`
+mode: Transform
+provider:
+  base_url: https://provider.example.test
+  api_key: upstream-key
+  web_search:
+    support: sometimes
+  models:
+    moonbridge:
+      name: claude-test
+`))
+	if err == nil {
+		t.Fatal("LoadFromYAML() error = nil, want invalid web search support error")
 	}
 }
 

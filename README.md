@@ -63,6 +63,14 @@ provider:
 
 `cache.ttl` 支持 `5m`（默认）和 `1h`。
 
+### Web Search 能力
+
+`provider.web_search.support` 控制是否向 Anthropic 上游注入搜索工具：
+
+- `auto`：启动 Transform 时用默认模型发送一次流式轻量探测；只有探测证明可用才注入，否则保守禁用
+- `enabled`：跳过探测，始终注入 Anthropic `web_search_20250305`
+- `disabled`：不注入搜索工具，Codex 仍可继续使用其他工具
+
 ### 调试抓包
 
 打开 `trace_requests: true` 后，每次请求和响应会按模式写入 `trace/` 目录，方便排查问题。API Key 等敏感信息会自动脱敏。
@@ -111,7 +119,7 @@ export MOONBRIDGE_CLIENT_API_KEY="local-dev"
 ./scripts/start_codex_with_moonbridge.sh '请运行测试并汇报结果'
 ```
 
-脚本会自动生成隔离的 Codex 配置，不会修改你全局的 `~/.codex`。
+脚本会自动生成隔离的 Codex 配置，不会修改你全局的 `~/.codex`；如果全局 `~/.codex/config.toml` 中存在 `[tui].status_line`，会复制到隔离配置里，保持当前 statusline 显示习惯。
 
 ## 配合 Claude Code 使用
 
@@ -155,8 +163,8 @@ Moon Bridge 支持以下工具类型：
 
 - **函数工具**（`type: "function"`）：标准 JSON Schema 参数定义，Anthropic 返回的工具调用会映射为 OpenAI 的 `function_call`。
 - **`local_shell`**：Codex CLI 的本地 shell 工具，自动映射为 Anthropic 兼容格式，shell 执行仍由 Codex 客户端完成。
-- **`web_search`**：Codex 的搜索工具，自动转译为 Anthropic `web_search_20250305`，搜索次数上限由 `provider.web_search.max_uses` 控制。
-- **Custom grammar 工具**：Codex 内置需要 freeform grammar 的工具目前主要是 `apply_patch` 和 Code Mode `exec`。Moon Bridge 会把它们在 Anthropic 侧暴露成结构化 schema：`apply_patch` 使用 `operations`，`exec` 使用 `source`；Provider 返回后再拼回 Codex 需要的 raw grammar call。
+- **`web_search`**：Codex 的搜索工具，按 Provider 能力注入 Anthropic `web_search_20250305`，搜索次数上限由 `provider.web_search.max_uses` 控制。
+- **Custom grammar 工具**：Codex 内置需要 freeform grammar 的工具目前主要是 `apply_patch` 和 Code Mode `exec`。Moon Bridge 会把 `apply_patch` 拆成 add/delete/update/replace/batch 一组结构化工具，把 `exec` 暴露成 `source`；Provider 返回后再拼回 Codex 需要的 raw grammar call。
 - **命名空间 / MCP 工具**：支持带命名前缀的工具名称。
 
 ## 响应与用量

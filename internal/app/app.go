@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/bridge"
@@ -58,6 +59,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 		Version:   cfg.ProviderVersion,
 		UserAgent: cfg.ProviderUserAgent,
 	})
+	cfg = resolveWebSearchSupport(ctx, cfg, anthropicClient, errors)
 	tracer := mbtrace.New(mbtrace.Config{
 		Enabled: cfg.TraceRequests,
 		Root:    transformTraceRoot(),
@@ -71,6 +73,47 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	})
 
 	return runHTTPServer(ctx, cfg.Addr, handler, errors)
+}
+
+type webSearchProber interface {
+	ProbeWebSearch(context.Context, string) (bool, error)
+}
+
+func resolveWebSearchSupport(ctx context.Context, cfg config.Config, prober webSearchProber, errors io.Writer) config.Config {
+	switch cfg.WebSearchSupport {
+	case config.WebSearchSupportDisabled:
+		logger.Info("web_search disabled by config")
+		fmt.Fprintln(errors, "web_search disabled by config")
+		return cfg
+	case config.WebSearchSupportEnabled:
+		logger.Info("web_search forced enabled by config")
+		return cfg
+	}
+
+	model := cfg.WebSearchProbeModel()
+	if model == "" {
+		cfg.DisableWebSearch()
+		logger.Warn("web_search auto probe skipped: no default model alias; tool injection disabled")
+		return cfg
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	supported, err := prober.ProbeWebSearch(probeCtx, model)
+	if err != nil {
+		cfg.DisableWebSearch()
+		logger.Warn("web_search auto probe failed; tool injection disabled", "error", err)
+		fmt.Fprintf(errors, "web_search auto probe failed; tool injection disabled: %v\n", err)
+		return cfg
+	}
+	if !supported {
+		cfg.DisableWebSearch()
+		logger.Warn("web_search unsupported by provider; tool injection disabled", "model", model)
+		fmt.Fprintln(errors, "web_search unsupported by provider; tool injection disabled")
+		return cfg
+	}
+	logger.Info("web_search supported by provider", "model", model)
+	return cfg
 }
 
 func runCaptureResponse(ctx context.Context, cfg config.Config, errors io.Writer) error {
@@ -153,7 +196,7 @@ func runHTTPServer(ctx context.Context, addr string, handler http.Handler, error
 		}
 		logger.Error("http server error", "error", err)
 		return err
-}
+	}
 }
 
 type anthropicClientWrapper struct {

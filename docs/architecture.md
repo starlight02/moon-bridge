@@ -81,11 +81,13 @@ flowchart LR
 - 读取 `config.yml`（或 `MOONBRIDGE_CONFIG` 环境变量指定路径）。
 - 使用 `yaml.v3` `KnownFields(true)` 严格解析，防止字段拼写错误。
 - 校验 mode、必填字段（base_url / api_key / models）、缓存参数。
-- 提供 `ModelFor()` 将客户端传入的模型别名映射为上游真实模型名。
+- 提供 `ModelFor()` 将客户端传入的模型别名映射为上游真实模型名，并读取 `provider.web_search.support` 控制搜索工具是否自动探测/强制启用/禁用。
 
 ### internal/app
 
 应用组装层。根据 mode 创建 Anthropic client、Bridge、trace tracer、HTTP handler，启动 HTTP server。
+
+Transform 模式下，如果 `provider.web_search.support: auto`，启动时会用默认模型发送一次流式轻量 `web_search_20250305` 工具声明探测；只有探测证明可用才注入，否则进程内保守禁用 Codex `web_search` 工具注入。
 
 ### internal/server
 
@@ -154,7 +156,8 @@ OpenAI Responses 协议 DTO 定义。包含 `ResponsesRequest`、`Response`、`O
 - 支持 `/responses` 和 `/v1/responses` 两个路径，兼容 Codex CLI 的不同路由约定。
 - `usage.input_tokens_details.cached_tokens` 即使为 0 也序列化输出，避免 Codex 压缩上下文时解析失败。
 - `local_shell_call` 使用独立 JSON schema 和 output item 类型，不走普通 `function_call` 路径。
-- `web_search_call` 流式中 `input_json_delta` 不产生 `function_call_arguments.delta`，而是并入 `action` 字段。
+- `web_search_call` 流式中 `input_json_delta` 不产生 `function_call_arguments.delta`，而是并入 `action` 字段；当 Provider 探测不支持 web search 时，不向上游注入搜索工具。
+- 空 `text_delta` / 空 `output_text` 不再生成 message 输出或 Anthropic `text` block，避免下一轮工具历史里出现 `{"type":"text"}` 这种缺少 `text` 字段的非法内容。
 
 ### 消息顺序
 
@@ -169,6 +172,6 @@ Anthropic Messages API 要求轮次内 `tool_use` block 不能跨消息分割。
 
 - `namespace` 工具展平：`mcp__deepwiki__ask_question` 样式，匹配 Codex 回收 function call 时的命名格式。
 - DeepWiki 确认 Codex 内置 grammar/freeform 工具主要是 `apply_patch` 和 Code Mode `exec`；Moon Bridge 依赖 `format.definition` 识别 grammar kind，而不是只看工具名。
-- `apply_patch` 在 Anthropic 侧暴露为 `operations` schema，响应时拼回 `*** Begin Patch` / `*** End Patch` raw grammar；`update_file` 携带 `content` 时会转成 `Delete File` + `Add File` 的整文件替换，避免生成空 Update hunk。内部仍接受 `raw_patch` 作为历史容错，但不在 schema 中暴露。
-- Code Mode `exec` 在 Anthropic 侧暴露为 `{source: string}` schema，响应时把 `source` 原样拼回 Codex custom tool input。
+- `apply_patch` 在 Anthropic 侧拆成 `apply_patch_add_file`、`apply_patch_delete_file`、`apply_patch_update_file`、`apply_patch_replace_file`、`apply_patch_batch` 工具集合，响应时统一回映射为 Codex `apply_patch` custom call 并拼回 `*** Begin Patch` / `*** End Patch` raw grammar；proxy 描述只讲结构化 JSON 操作，不再带 Codex 原始 `FREEFORM` / grammar 提示。`replace_file` 和 `update_file + content` 会转成 `Delete File` + `Add File` 的整文件替换，避免生成空 Update hunk。
+- Code Mode `exec` 在 Anthropic 侧暴露为 `{source: string}` schema，响应时把 `source` 原样拼回 Codex custom tool input；proxy 描述同样不暴露原始 grammar。
 - DeepWiki / MCP 的具体使用约束属于代理提示词层，由 `AGENTS.md` 管理；Transform 层只负责按协议展平和转发工具定义，不改写 MCP 工具说明。

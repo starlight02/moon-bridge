@@ -84,6 +84,39 @@ func TestConvertStreamEventsConvertsToolArguments(t *testing.T) {
 	}
 }
 
+func TestConvertStreamEventsIgnoresEmptyTextDeltasBeforeToolCall(t *testing.T) {
+	events := []anthropic.StreamEvent{
+		{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant"}},
+		{Type: "content_block_start", Index: 1, ContentBlock: &anthropic.ContentBlock{Type: "text"}},
+		{Type: "content_block_delta", Index: 1, Delta: anthropic.StreamDelta{Type: "text_delta"}},
+		{Type: "content_block_start", Index: 2, ContentBlock: &anthropic.ContentBlock{Type: "tool_use", ID: "call_ls", Name: "exec_command", Input: json.RawMessage(`{}`)}},
+		{Type: "content_block_delta", Index: 2, Delta: anthropic.StreamDelta{Type: "input_json_delta", PartialJSON: `{"cmd":"ls trace"}`}},
+		{Type: "content_block_delta", Index: 1, Delta: anthropic.StreamDelta{Type: "text_delta"}},
+		{Type: "content_block_stop", Index: 1},
+		{Type: "content_block_stop", Index: 2},
+		{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "tool_use"}},
+		{Type: "message_stop"},
+	}
+
+	converted := testBridge().ConvertStreamEvents(events, "gpt-test")
+	for _, event := range converted {
+		if event.Event != "response.output_item.done" {
+			continue
+		}
+		item := event.Data.(openai.OutputItemEvent).Item
+		if item.Type == "message" {
+			t.Fatalf("unexpected empty message output item = %+v", item)
+		}
+	}
+	completed := streamLifecycleResponse(t, converted, "response.completed")
+	if len(completed.Output) != 1 {
+		t.Fatalf("completed output = %+v", completed.Output)
+	}
+	if completed.Output[0].Type != "function_call" || completed.Output[0].Name != "exec_command" {
+		t.Fatalf("completed output = %+v", completed.Output)
+	}
+}
+
 func TestConvertStreamEventsMapsRequestCustomToolToCustomToolCall(t *testing.T) {
 	input := "replace this buffer\nwith this text\n"
 	request := openai.ResponsesRequest{
@@ -204,6 +237,44 @@ func TestConvertStreamEventsBuildsApplyPatchGrammarFromProxyOperations(t *testin
 	bridgeUnderTest := testBridge()
 	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request))
 	completed := streamLifecycleResponse(t, converted, "response.completed")
+	want := "*** Begin Patch\n*** Add File: docs/api.md\n+# API\n+content\n*** End Patch"
+	if completed.Output[0].Input != want {
+		t.Fatalf("patch = %q, want %q", completed.Output[0].Input, want)
+	}
+}
+
+func TestConvertStreamEventsBuildsApplyPatchGrammarFromSplitAddFileTool(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Tools: []openai.Tool{{
+			Type:   "custom",
+			Name:   "apply_patch",
+			Format: map[string]any{"type": "grammar", "syntax": "lark", "definition": applyPatchGrammarForTest()},
+		}},
+	}
+	input := map[string]any{
+		"path":    "docs/api.md",
+		"content": "# API\ncontent\n",
+	}
+	events := []anthropic.StreamEvent{
+		{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant"}},
+		{Type: "content_block_start", Index: 0, ContentBlock: &anthropic.ContentBlock{
+			Type: "tool_use",
+			ID:   "tool_patch",
+			Name: "apply_patch_add_file",
+		}},
+		{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "input_json_delta", PartialJSON: string(mustMarshalRaw(t, input))}},
+		{Type: "content_block_stop", Index: 0},
+		{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "tool_use"}},
+		{Type: "message_stop"},
+	}
+
+	bridgeUnderTest := testBridge()
+	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request))
+	completed := streamLifecycleResponse(t, converted, "response.completed")
+	if completed.Output[0].Name != "apply_patch" {
+		t.Fatalf("output tool name = %q", completed.Output[0].Name)
+	}
 	want := "*** Begin Patch\n*** Add File: docs/api.md\n+# API\n+content\n*** End Patch"
 	if completed.Output[0].Input != want {
 		t.Fatalf("patch = %q, want %q", completed.Output[0].Input, want)

@@ -8,8 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"moonbridge/internal/logger"
+	"net/http"
 	"strings"
 )
 
@@ -122,6 +122,54 @@ func (client *Client) StreamMessage(ctx context.Context, request MessageRequest)
 	return &sseStream{body: response.Body, scanner: bufio.NewScanner(response.Body)}, nil
 }
 
+func (client *Client) ProbeWebSearch(ctx context.Context, model string) (bool, error) {
+	stream, err := client.StreamMessage(ctx, MessageRequest{
+		Model:     model,
+		MaxTokens: 1,
+		Messages: []Message{{
+			Role:    "user",
+			Content: []ContentBlock{{Type: "text", Text: "Reply with ok. Do not search."}},
+		}},
+		Tools: []Tool{{
+			Name:    "web_search",
+			Type:    "web_search_20250305",
+			MaxUses: 1,
+		}},
+		ToolChoice: ToolChoice{Type: "auto"},
+	})
+	if err != nil {
+		if IsUnsupportedWebSearchError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	defer stream.Close()
+	for {
+		event, err := stream.Next()
+		if err == io.EOF {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if event.Type == "error" && event.Error != nil {
+			providerError := &ProviderError{StatusCode: http.StatusBadRequest, Type: event.Error.Type, Message: event.Error.Message}
+			if IsUnsupportedWebSearchError(providerError) {
+				return false, nil
+			}
+			return false, providerError
+		}
+		switch event.Type {
+		case "message_start", "content_block_start", "content_block_delta", "message_delta", "message_stop":
+			return true, nil
+		case "ping":
+			continue
+		default:
+			return true, nil
+		}
+	}
+}
+
 func (client *Client) newRequest(ctx context.Context, messageRequest MessageRequest) (*http.Request, error) {
 	data, err := json.Marshal(messageRequest)
 	if err != nil {
@@ -231,6 +279,26 @@ func IsProviderError(err error) (*ProviderError, bool) {
 		return providerError, true
 	}
 	return nil, false
+}
+
+func IsUnsupportedWebSearchError(err error) bool {
+	providerError, ok := IsProviderError(err)
+	if !ok {
+		return false
+	}
+	if providerError.StatusCode != http.StatusBadRequest && providerError.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	message := strings.ToLower(providerError.Type + " " + providerError.Message)
+	if !strings.Contains(message, "web_search") {
+		return strings.Contains(message, "input_schema") || strings.Contains(message, "tools")
+	}
+	for _, marker := range []string{"unsupported", "not supported", "not_support", "unknown", "invalid", "unrecognized", "input_schema", "field required", "missing"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (err *ProviderError) OpenAIStatus() int {

@@ -2,9 +2,12 @@ package app
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
+	"moonbridge/internal/config"
 	mbtrace "moonbridge/internal/trace"
 )
 
@@ -36,5 +39,83 @@ func TestCaptureTraceDirectoriesUseSession(t *testing.T) {
 	anthropicTracer := mbtrace.New(captureAnthropicTraceConfig(true))
 	if got, want := anthropicTracer.Directory(), filepath.Join("trace", "Capture", "Anthropic", anthropicTracer.SessionID()); got != want {
 		t.Fatalf("anthropic trace directory = %q, want %q", got, want)
+	}
+}
+
+type fakeWebSearchProber struct {
+	supported bool
+	err       error
+	called    bool
+	model     string
+}
+
+func (prober *fakeWebSearchProber) ProbeWebSearch(context.Context, string) (bool, error) {
+	prober.called = true
+	return prober.supported, prober.err
+}
+
+func TestResolveWebSearchSupportAutoDisablesUnsupportedProvider(t *testing.T) {
+	prober := &fakeWebSearchProber{supported: false}
+	cfg := config.Config{
+		WebSearchSupport: config.WebSearchSupportAuto,
+		DefaultModel:     "moonbridge",
+		ModelMap:         map[string]string{"moonbridge": "claude-test"},
+	}
+
+	resolved := resolveWebSearchSupport(context.Background(), cfg, prober, &bytes.Buffer{})
+	if !prober.called {
+		t.Fatal("ProbeWebSearch was not called")
+	}
+	if resolved.WebSearchSupport != config.WebSearchSupportDisabled {
+		t.Fatalf("WebSearchSupport = %q, want disabled", resolved.WebSearchSupport)
+	}
+	if resolved.WebSearchEnabled() {
+		t.Fatal("WebSearchEnabled() = true, want false")
+	}
+}
+
+func TestResolveWebSearchSupportDisabledSkipsProbe(t *testing.T) {
+	prober := &fakeWebSearchProber{supported: true}
+	cfg := config.Config{WebSearchSupport: config.WebSearchSupportDisabled}
+
+	resolved := resolveWebSearchSupport(context.Background(), cfg, prober, &bytes.Buffer{})
+	if prober.called {
+		t.Fatal("ProbeWebSearch was called for disabled web_search")
+	}
+	if resolved.WebSearchEnabled() {
+		t.Fatal("WebSearchEnabled() = true, want false")
+	}
+}
+
+func TestResolveWebSearchSupportDisablesWhenProbeModelIsMissing(t *testing.T) {
+	prober := &fakeWebSearchProber{supported: true}
+	cfg := config.Config{
+		WebSearchSupport: config.WebSearchSupportAuto,
+		ProviderModels: map[string]config.ProviderModelConfig{
+			"slow": {Name: "claude-slow"},
+			"fast": {Name: "claude-fast"},
+		},
+	}
+
+	resolved := resolveWebSearchSupport(context.Background(), cfg, prober, &bytes.Buffer{})
+	if prober.called {
+		t.Fatal("ProbeWebSearch was called without a deterministic model")
+	}
+	if resolved.WebSearchEnabled() {
+		t.Fatal("WebSearchEnabled() = true, want false without a probe model")
+	}
+}
+
+func TestResolveWebSearchSupportDisablesOnProbeInfrastructureError(t *testing.T) {
+	prober := &fakeWebSearchProber{err: errors.New("network down")}
+	cfg := config.Config{
+		WebSearchSupport: config.WebSearchSupportAuto,
+		DefaultModel:     "moonbridge",
+		ModelMap:         map[string]string{"moonbridge": "claude-test"},
+	}
+
+	resolved := resolveWebSearchSupport(context.Background(), cfg, prober, &bytes.Buffer{})
+	if resolved.WebSearchEnabled() {
+		t.Fatal("WebSearchEnabled() = true, want false when auto probe cannot prove support")
 	}
 }

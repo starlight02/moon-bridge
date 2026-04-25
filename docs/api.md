@@ -50,9 +50,9 @@ Transform 模式下，以下 OpenAI Responses 请求字段被支持：
 |---------------|----------------|
 | `function` | Anthropic tool 标准 `input_schema` |
 | `local_shell` | Anthropic tool，`name: "local_shell"` |
-| `custom` | Anthropic tool；Codex `apply_patch` grammar 暴露为 `operations` schema，Code Mode `exec` 暴露为 `source` schema，其他 custom freeform 包装为 `input` |
+| `custom` | Anthropic tool；Codex `apply_patch` grammar 拆成 add/delete/update/replace/batch 结构化工具，Code Mode `exec` 暴露为 `source` schema，其他 custom freeform 包装为 `input` |
 | `namespace` | 展平为子工具的 `namespace__tool` 命名 |
-| `web_search` / `web_search_preview` | Anthropic server tool `web_search_20250305` |
+| `web_search` / `web_search_preview` | Anthropic server tool `web_search_20250305`；当 `provider.web_search.support` 探测为不支持或配置为 `disabled` 时跳过 |
 | `file_search` / `computer_use_preview` / `image_generation` | **忽略** |
 
 ## 流式事件
@@ -77,6 +77,7 @@ Anthropic Messages SSE 事件流会被逐事件转换为 OpenAI Responses 格式
 - **`local_shell_call`**：input_json_delta 转为 local shell action，不产生 `function_call_arguments.delta`。
 - **`web_search_call`**：流式 `input_json_delta` 并入 `action` 字段而非 `function_call_arguments`；空搜索 action 会被过滤。
 - **`custom_tool_call`**：流式 `input_json_delta` 转为 `response.custom_tool_call_input.delta` 事件，最终产出 `custom_tool_call` 输出项。
+- **`apply_patch` 拆分工具**：Anthropic 侧的 `apply_patch_add_file` / `apply_patch_delete_file` / `apply_patch_update_file` / `apply_patch_replace_file` / `apply_patch_batch` 最终都会回映射为 Codex 看到的 `custom_tool_call.name="apply_patch"`。
 
 ## 非流式响应
 

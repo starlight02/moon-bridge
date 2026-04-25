@@ -12,7 +12,7 @@ import (
 )
 
 func testBridge() *bridge.Bridge {
-	return bridge.New(config.Config{
+	return testBridgeWithConfig(config.Config{
 		DefaultMaxTokens: 1024,
 		ModelMap:         map[string]string{"gpt-test": "claude-test"},
 		Cache: config.CacheConfig{
@@ -23,7 +23,28 @@ func testBridge() *bridge.Bridge {
 			MaxBreakpoints:           4,
 			MinCacheTokens:           1,
 		},
-	}, cache.NewMemoryRegistry())
+	})
+}
+
+func testBridgeWithConfig(cfg config.Config) *bridge.Bridge {
+	return bridge.New(cfg, cache.NewMemoryRegistry())
+}
+
+func testBridgeWithWebSearchDisabled() *bridge.Bridge {
+	cfg := config.Config{
+		DefaultMaxTokens: 1024,
+		ModelMap:         map[string]string{"gpt-test": "claude-test"},
+		WebSearchSupport: config.WebSearchSupportDisabled,
+		Cache: config.CacheConfig{
+			Mode:                     "explicit",
+			TTL:                      "1h",
+			PromptCaching:            true,
+			ExplicitCacheBreakpoints: true,
+			MaxBreakpoints:           4,
+			MinCacheTokens:           1,
+		},
+	}
+	return testBridgeWithConfig(cfg)
 }
 
 func TestToAnthropicConvertsTextToolsToolChoiceAndCache(t *testing.T) {

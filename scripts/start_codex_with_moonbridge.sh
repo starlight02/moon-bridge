@@ -11,6 +11,7 @@ CONFIG_FILE="${MOONBRIDGE_CONFIG:-"${ROOT_DIR}/config.yml"}"
 CODEX_HOME_DIR="${ROOT_DIR}/FakeHome/Codex"
 SERVER_BIN="${ROOT_DIR}/.cache/start-codex/moonbridge"
 LOG_FILE="${ROOT_DIR}/logs/moonbridge-codex.log"
+GLOBAL_CODEX_CONFIG="${MOONBRIDGE_CODEX_CONFIG:-"${HOME}/.codex/config.toml"}"
 PROMPT="${1:-}"
 
 require_command() {
@@ -58,6 +59,51 @@ ensure_port_free() {
     echo "Moon Bridge log: ${LOG_FILE}" >&2
     exit 1
   fi
+}
+
+append_codex_status_line() {
+  local target_config="$1"
+  local status_line=""
+
+  if [[ ! -f "$GLOBAL_CODEX_CONFIG" ]]; then
+    echo "No global Codex config found at ${GLOBAL_CODEX_CONFIG}; status_line not copied"
+    return
+  fi
+
+  status_line="$(
+    awk '
+      /^\[/ {
+        in_tui = ($0 == "[tui]")
+        capture = 0
+      }
+      in_tui && /^[[:space:]]*status_line[[:space:]]*=/ {
+        capture = 1
+        print
+        if ($0 ~ /\]/) {
+          capture = 0
+        }
+        next
+      }
+      in_tui && capture {
+        print
+        if ($0 ~ /\]/) {
+          capture = 0
+        }
+        next
+      }
+    ' "$GLOBAL_CODEX_CONFIG"
+  )"
+
+  if [[ -z "$status_line" ]]; then
+    echo "No [tui].status_line found in ${GLOBAL_CODEX_CONFIG}; status_line not copied"
+    return
+  fi
+
+  {
+    printf '\n[tui]\n'
+    printf '%s\n' "$status_line"
+  } >> "$target_config"
+  echo "Copied Codex status_line from ${GLOBAL_CODEX_CONFIG}"
 }
 
 cleanup() {
@@ -118,6 +164,7 @@ ensure_port_free
   --print-codex-config "$MODEL_ALIAS" \
   --codex-base-url "http://${BASE_ADDR}/v1" \
   > "${CODEX_HOME_DIR}/config.toml"
+append_codex_status_line "${CODEX_HOME_DIR}/config.toml"
 
 echo "Starting Moon Bridge on ${ADDR}"
 echo "Moon Bridge log: ${LOG_FILE}"

@@ -23,6 +23,14 @@ const (
 	ModeTransform        Mode = "Transform"
 )
 
+type WebSearchSupport string
+
+const (
+	WebSearchSupportAuto     WebSearchSupport = "auto"
+	WebSearchSupportEnabled  WebSearchSupport = "enabled"
+	WebSearchSupportDisabled WebSearchSupport = "disabled"
+)
+
 type Config struct {
 	Mode              Mode
 	Addr              string
@@ -35,6 +43,7 @@ type Config struct {
 	ProviderAPIKey    string
 	ProviderVersion   string
 	ProviderUserAgent string
+	WebSearchSupport  WebSearchSupport
 	WebSearchMaxUses  int
 	DefaultMaxTokens  int
 	ModelMap          map[string]string
@@ -122,7 +131,8 @@ type ProviderModelFileConfig struct {
 }
 
 type WebSearchFileConfig struct {
-	MaxUses int `yaml:"max_uses"`
+	Support string `yaml:"support"`
+	MaxUses int    `yaml:"max_uses"`
 }
 
 type DeveloperFileConfig struct {
@@ -176,6 +186,10 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	webSearchSupport, err := parseWebSearchSupport(fileConfig.Provider.WebSearch.Support)
+	if err != nil {
+		return Config{}, err
+	}
 	providerModels := FromProviderModelFileConfig(fileConfig.Provider.Models)
 	cfg := Config{
 		Mode:              mode,
@@ -189,6 +203,7 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 		ProviderAPIKey:    strings.TrimSpace(fileConfig.Provider.APIKey),
 		ProviderVersion:   valueOrDefault(strings.TrimSpace(fileConfig.Provider.Version), "2023-06-01"),
 		ProviderUserAgent: strings.TrimSpace(fileConfig.Provider.UserAgent),
+		WebSearchSupport:  webSearchSupport,
 		WebSearchMaxUses:  intOrDefault(fileConfig.Provider.WebSearch.MaxUses, 8),
 		DefaultMaxTokens:  intOrDefault(fileConfig.Provider.DefaultMaxTokens, 1024),
 		ModelMap:          providerModelMap(providerModels),
@@ -212,6 +227,17 @@ func parseMode(value string) (Mode, error) {
 		return "", errors.New("mode is required")
 	default:
 		return "", fmt.Errorf("invalid mode %q", value)
+	}
+}
+
+func parseWebSearchSupport(value string) (WebSearchSupport, error) {
+	switch support := WebSearchSupport(strings.TrimSpace(value)); support {
+	case "":
+		return WebSearchSupportAuto, nil
+	case WebSearchSupportAuto, WebSearchSupportEnabled, WebSearchSupportDisabled:
+		return support, nil
+	default:
+		return "", fmt.Errorf("invalid provider.web_search.support %q", value)
 	}
 }
 
@@ -356,6 +382,22 @@ func (cfg Config) CodexModel() string {
 	return cfg.DefaultModelAlias()
 }
 
+func (cfg Config) WebSearchEnabled() bool {
+	return cfg.WebSearchSupport != WebSearchSupportDisabled
+}
+
+func (cfg Config) WebSearchProbeModel() string {
+	alias := cfg.DefaultModelAlias()
+	if alias == "" {
+		return ""
+	}
+	return cfg.ModelFor(alias)
+}
+
+func (cfg *Config) DisableWebSearch() {
+	cfg.WebSearchSupport = WebSearchSupportDisabled
+}
+
 func (cfg *Config) OverrideAddr(addr string) {
 	if addr == "" {
 		return
@@ -408,7 +450,8 @@ func providerModelMap(models map[string]ProviderModelConfig) map[string]string {
 	}
 	return normalized
 }
-	type LogFileConfig struct {
-		Level  string `yaml:"level"`
-		Format string `yaml:"format"`
-	}
+
+type LogFileConfig struct {
+	Level  string `yaml:"level"`
+	Format string `yaml:"format"`
+}

@@ -87,7 +87,7 @@ internal/e2e           真实提供商端到端测试
 
 | 指令类型 | Anthropic 结构 | 反向映射 |
 | --- | --- | --- |
-| `apply_patch` | 结构化 `operations` 数组，包含路径、hunks 和行操作 | 重建为 `*** Begin Patch` / `*** End Patch` 原始语法，并标准化尾部标记（`+*** End Patch` → `*** End Patch`）。 |
+| `apply_patch` | 拆成 `apply_patch_add_file` / `apply_patch_delete_file` / `apply_patch_update_file` / `apply_patch_replace_file` / `apply_patch_batch` 一组结构化工具 | 全部回映射为 Codex 的 `custom_tool_call.name="apply_patch"`，并重建 `*** Begin Patch` / `*** End Patch` 原始语法。 |
 | `exec`（代码模式） | `{source: string}` | `source` 字段作为原始自定义工具输入返回。 |
 | 其他 custom / freeform | `{input: string}` | 从 `input` 字段提取原始输入字符串。 |
 
@@ -95,7 +95,7 @@ internal/e2e           真实提供商端到端测试
 
 ### Web Search 桥接
 
-OpenAI `web_search`/`web_search_preview` 工具被转换为 Anthropic `web_search_20250305` 服务端工具。在响应侧，`server_tool_use:web_search` 被映射回 Codex `web_search_call` 输出条目。空搜索结果和前导消息（`Search results for query:`）会被过滤，避免污染对话历史。
+OpenAI `web_search`/`web_search_preview` 工具会在 Provider 支持时转换为 Anthropic `web_search_20250305` 服务端工具。`provider.web_search.support:auto` 会在 Transform 启动时用默认模型做一次流式轻量探测；只有探测证明可用才注入，否则本轮进程保守禁用搜索工具注入。也可以用 `enabled` 强制注入，或用 `disabled` 完全关闭。在响应侧，`server_tool_use:web_search` 被映射回 Codex `web_search_call` 输出条目。空搜索结果和前导消息（`Search results for query:`）会被过滤，避免污染对话历史。
 
 ### 历史记录合并
 
@@ -219,9 +219,9 @@ openai.usage.input_tokens_details.cached_tokens =
 | --- | --- | --- |
 | `{type:"function", name, description, parameters}` | `{name, description, input_schema}` | `parameters` 必须是 JSON Schema 对象。 |
 | `{type:"local_shell"}` | `{name:"local_shell", ...}` | Codex `local_shell_call` ↔ `tool_use`。包含 command、working_directory、timeout_ms、env。 |
-| `{type:"custom"}` 带 grammar | 按 grammar 类型划分的结构化 JSON schema | `apply_patch` → operations 数组；`exec` → source 字符串。 |
+| `{type:"custom"}` 带 grammar | 按 grammar 类型划分的结构化 JSON schema | `apply_patch` → add/delete/update/replace/batch 工具集合；`exec` → source 字符串。 |
 | `namespace` | 展平为 `namespace__tool` | 子 function/custom 带命名空间前缀展开。 |
-| `web_search_preview` | `{type:"web_search_20250305"}` | 最大使用次数来自配置。 |
+| `web_search_preview` | `{type:"web_search_20250305"}` 或跳过 | 最大使用次数和是否注入来自 `provider.web_search` 配置/探测。 |
 | `file_search`、`computer_use_preview`、`image_generation` | 跳过 | 在工具声明中静默忽略。 |
 
 ### 响应侧
@@ -352,7 +352,7 @@ cache:
 - 非流式文本请求/响应转换
 - 带 SSE 状态机的流式转换（文本、tool_use 增量、生命周期事件）
 - Function 工具 schema 映射和工具调用桥接
-- Codex 专属工具支持：`local_shell`、`custom`（apply_patch、exec）、`namespace`、`web_search`
+- Codex 专属工具支持：`local_shell`、`custom`（apply_patch 工具集合、exec）、`namespace`、`web_search`
 - Codex 对话历史合并（连续工具调用 → 合并的 Anthropic 轮次）
 - 带 automatic/explicit/hybrid 断点策略的提示缓存规划器
 - `cache_control` 注入和用量标准化
@@ -365,7 +365,7 @@ cache:
 
 ### 已知缺口
 
-- 不支持 OpenAI 内置工具（`web_search`、`file_search`、`computer_use`、`code_interpreter` —— 只有 `web_search` 被桥接到 Anthropic 服务端工具）
+- 不支持多数 OpenAI 内置工具（`file_search`、`computer_use`、`code_interpreter`）；`web_search` 会按 Provider 能力桥接到 Anthropic 服务端工具
 - 不支持文件 ID 解析或后台响应
 - 不支持 `previous_response_id` / `response.store` 持久化
 - 没有真实 token 计数器；缓存阈值使用粗略估算（`len(json)/4`）

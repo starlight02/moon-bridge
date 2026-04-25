@@ -111,6 +111,26 @@ func TestToAnthropicConvertsCodexWebSearchTool(t *testing.T) {
 	}
 }
 
+func TestToAnthropicSkipsCodexWebSearchToolWhenProviderDisabled(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`"search the web"`),
+		Tools: []openai.Tool{
+			{Type: "web_search", SearchContentTypes: []string{"text", "image"}},
+			{Type: "local_shell"},
+		},
+	}
+
+	bridgeUnderTest := testBridgeWithWebSearchDisabled()
+	converted, _, err := bridgeUnderTest.ToAnthropic(request)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	if len(converted.Tools) != 1 || converted.Tools[0].Name != "local_shell" {
+		t.Fatalf("tools = %+v", converted.Tools)
+	}
+}
+
 func TestToAnthropicKeepsCodexWebSearchToolForModelDecision(t *testing.T) {
 	request := openai.ResponsesRequest{
 		Model: "gpt-test",
@@ -276,7 +296,7 @@ func TestFromAnthropicNormalizesApplyPatchGrammarTerminator(t *testing.T) {
 	}
 }
 
-func TestToAnthropicConvertsApplyPatchGrammarToolToSchemaProxy(t *testing.T) {
+func TestToAnthropicSplitsApplyPatchGrammarToolIntoSchemaProxyCollection(t *testing.T) {
 	request := openai.ResponsesRequest{
 		Model: "gpt-test",
 		Input: json.RawMessage(`"write docs"`),
@@ -291,12 +311,24 @@ func TestToAnthropicConvertsApplyPatchGrammarToolToSchemaProxy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToAnthropic() error = %v", err)
 	}
-	if len(converted.Tools) != 1 {
+	if len(converted.Tools) != 5 {
 		t.Fatalf("tools = %+v", converted.Tools)
 	}
-	properties, ok := converted.Tools[0].InputSchema["properties"].(map[string]any)
+	byName := map[string]anthropic.Tool{}
+	for _, tool := range converted.Tools {
+		byName[tool.Name] = tool
+		if strings.Contains(tool.Description, "FREEFORM") || strings.Contains(tool.Description, "OpenAI custom tool grammar") {
+			t.Fatalf("apply_patch proxy description should not expose contradictory raw grammar guidance: %q", tool.Description)
+		}
+	}
+	for _, name := range []string{"apply_patch_add_file", "apply_patch_delete_file", "apply_patch_update_file", "apply_patch_replace_file", "apply_patch_batch"} {
+		if _, ok := byName[name]; !ok {
+			t.Fatalf("missing split apply_patch tool %q in %+v", name, converted.Tools)
+		}
+	}
+	properties, ok := byName["apply_patch_batch"].InputSchema["properties"].(map[string]any)
 	if !ok {
-		t.Fatalf("schema = %+v", converted.Tools[0].InputSchema)
+		t.Fatalf("schema = %+v", byName["apply_patch_batch"].InputSchema)
 	}
 	if _, ok := properties["operations"]; !ok {
 		t.Fatalf("operations schema missing: %+v", properties)
@@ -312,9 +344,41 @@ func TestToAnthropicConvertsApplyPatchGrammarToolToSchemaProxy(t *testing.T) {
 	if _, ok := operationProperties["changes"]; ok {
 		t.Fatalf("raw changes should not be exposed in apply_patch operation schema: %+v", operationProperties)
 	}
-	required, ok := converted.Tools[0].InputSchema["required"].([]string)
+	if byName["apply_patch_batch"].InputSchema["additionalProperties"] != false || operationSchema["additionalProperties"] != false {
+		t.Fatalf("schema should reject extra properties: %+v", byName["apply_patch_batch"].InputSchema)
+	}
+	required, ok := byName["apply_patch_batch"].InputSchema["required"].([]string)
 	if !ok || len(required) != 1 || required[0] != "operations" {
-		t.Fatalf("required schema = %+v", converted.Tools[0].InputSchema["required"])
+		t.Fatalf("required schema = %+v", byName["apply_patch_batch"].InputSchema["required"])
+	}
+	if _, ok := byName["apply_patch_add_file"].InputSchema["properties"].(map[string]any)["content"]; !ok {
+		t.Fatalf("add_file schema = %+v", byName["apply_patch_add_file"].InputSchema)
+	}
+}
+
+func TestToAnthropicConvertsExecGrammarToolToSourceSchemaWithoutRawGrammarDescription(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`"run js"`),
+		Tools: []openai.Tool{{
+			Type:        "custom",
+			Name:        "exec",
+			Description: "FREEFORM code mode tool",
+			Format:      map[string]any{"type": "grammar", "syntax": "lark", "definition": "start: pragma_source | plain_source\npragma_source: \"// @exec:\" /.+/\nplain_source: /(.|\\n)+/\n"},
+		}},
+	}
+
+	converted, _, err := testBridge().ToAnthropic(request)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	description := converted.Tools[0].Description
+	if strings.Contains(description, "FREEFORM") || strings.Contains(description, "OpenAI custom tool grammar") {
+		t.Fatalf("exec proxy description should not expose raw grammar guidance: %q", description)
+	}
+	properties := converted.Tools[0].InputSchema["properties"].(map[string]any)
+	if _, ok := properties["source"]; !ok {
+		t.Fatalf("source schema missing: %+v", properties)
 	}
 }
 
@@ -348,6 +412,39 @@ func TestFromAnthropicBuildsApplyPatchGrammarFromProxyOperations(t *testing.T) {
 	converted := bridgeUnderTest.FromAnthropicWithContext(response, "gpt-test", bridgeUnderTest.ConversionContext(request))
 	if len(converted.Output) != 1 {
 		t.Fatalf("output = %+v", converted.Output)
+	}
+	want := "*** Begin Patch\n*** Add File: docs/api.md\n+# API\n+content\n*** End Patch"
+	if converted.Output[0].Input != want {
+		t.Fatalf("patch = %q, want %q", converted.Output[0].Input, want)
+	}
+}
+
+func TestFromAnthropicBuildsApplyPatchGrammarFromSplitAddFileTool(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Tools: []openai.Tool{{
+			Type:   "custom",
+			Name:   "apply_patch",
+			Format: map[string]any{"type": "grammar", "syntax": "lark", "definition": applyPatchGrammarForTest()},
+		}},
+	}
+	response := anthropic.MessageResponse{
+		ID:         "msg_123",
+		Type:       "message",
+		Role:       "assistant",
+		StopReason: "tool_use",
+		Content: []anthropic.ContentBlock{{
+			Type:  "tool_use",
+			ID:    "tool_patch",
+			Name:  "apply_patch_add_file",
+			Input: mustMarshalRaw(t, map[string]any{"path": "docs/api.md", "content": "# API\ncontent\n"}),
+		}},
+	}
+
+	bridgeUnderTest := testBridge()
+	converted := bridgeUnderTest.FromAnthropicWithContext(response, "gpt-test", bridgeUnderTest.ConversionContext(request))
+	if converted.Output[0].Name != "apply_patch" {
+		t.Fatalf("output tool name = %q", converted.Output[0].Name)
 	}
 	want := "*** Begin Patch\n*** Add File: docs/api.md\n+# API\n+content\n*** End Patch"
 	if converted.Output[0].Input != want {
@@ -410,12 +507,19 @@ func TestToAnthropicConvertsApplyPatchHistoryToProxyOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToAnthropic() error = %v", err)
 	}
-	var input applyPatchHistoryInput
+	toolUse := converted.Messages[0].Content[0]
+	if toolUse.Name != "apply_patch_add_file" {
+		t.Fatalf("tool name = %q, want apply_patch_add_file", toolUse.Name)
+	}
+	var input struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
 	if err := json.Unmarshal(converted.Messages[0].Content[0].Input, &input); err != nil {
 		t.Fatalf("tool input JSON = %s: %v", string(converted.Messages[0].Content[0].Input), err)
 	}
-	if len(input.Operations) != 1 || input.Operations[0].Type != "add_file" || input.Operations[0].Path != "docs/api.md" || input.Operations[0].Content != "# API\ncontent" {
-		t.Fatalf("proxy operations = %+v", input.Operations)
+	if input.Path != "docs/api.md" || input.Content != "# API\ncontent" {
+		t.Fatalf("proxy input = %+v", input)
 	}
 }
 
@@ -734,6 +838,33 @@ func TestToAnthropicGroupsParallelFunctionCallsBeforeOutputs(t *testing.T) {
 	}
 	if results.Content[1].Type != "tool_result" || results.Content[1].ToolUseID != "tool_ls" {
 		t.Fatalf("second tool result = %+v", results.Content[1])
+	}
+}
+
+func TestToAnthropicSkipsEmptyAssistantMessageBeforeToolCall(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`[
+			{"role":"user","content":[{"type":"input_text","text":"inspect trace"}],"type":"message"},
+			{"role":"assistant","content":[{"type":"output_text","text":""}],"type":"message"},
+			{"arguments":"{\"cmd\":\"ls trace\"}","call_id":"call_ls","name":"exec_command","type":"function_call"},
+			{"call_id":"call_ls","output":"trace/Transform\n","type":"function_call_output"}
+		]`),
+	}
+
+	converted, _, err := testBridge().ToAnthropic(request)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	if len(converted.Messages) != 3 {
+		t.Fatalf("messages = %+v", converted.Messages)
+	}
+	assistant := converted.Messages[1]
+	if assistant.Role != "assistant" || len(assistant.Content) != 1 {
+		t.Fatalf("assistant = %+v", assistant)
+	}
+	if assistant.Content[0].Type != "tool_use" || assistant.Content[0].Name != "exec_command" {
+		t.Fatalf("assistant content = %+v", assistant.Content)
 	}
 }
 

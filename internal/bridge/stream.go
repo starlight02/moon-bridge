@@ -22,6 +22,7 @@ func (bridge *Bridge) ConvertStreamEventsWithContext(events []anthropic.StreamEv
 		toolArguments:           map[int]string{},
 		customToolInputs:        map[int]string{},
 		customToolInitialInputs: map[int]string{},
+		customToolNames:         map[int]string{},
 		webSearchActions:        map[int]*openai.ToolAction{},
 		webSearchInputs:         map[int]string{},
 		itemIDs:                 map[int]string{},
@@ -44,6 +45,7 @@ type streamConverter struct {
 	toolArguments           map[int]string
 	customToolInputs        map[int]string
 	customToolInitialInputs map[int]string
+	customToolNames         map[int]string
 	webSearchActions        map[int]*openai.ToolAction
 	webSearchInputs         map[int]string
 	itemIDs                 map[int]string
@@ -124,12 +126,13 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 				Type:   "custom_tool_call",
 				ID:     customToolItemID(block.ID),
 				CallID: block.ID,
-				Name:   block.Name,
+				Name:   converter.context.OpenAINameForCustomTool(block.Name),
 				Input:  "",
 				Status: "in_progress",
 			}
 			converter.itemIDs[index] = item.ID
 			converter.customToolInputs[index] = ""
+			converter.customToolNames[index] = block.Name
 			if len(block.Input) > 0 && string(block.Input) != "{}" {
 				converter.customToolInitialInputs[index] = string(block.Input)
 			}
@@ -162,6 +165,9 @@ func (converter *streamConverter) contentBlockDelta(event anthropic.StreamEvent)
 	index := event.Index
 	switch event.Delta.Type {
 	case "text_delta":
+		if event.Delta.Text == "" {
+			return nil
+		}
 		current := converter.contentText[index]
 		converter.contentText[index] = current + event.Delta.Text
 		if isEmptyWebSearchPrelude(converter.contentText[index]) {
@@ -296,12 +302,17 @@ func (converter *streamConverter) contentBlockStop(event anthropic.StreamEvent) 
 			inputJSON = converter.customToolInitialInputs[index]
 		}
 		item := converter.outputAt(index)
+		toolName := converter.customToolNames[index]
+		if toolName == "" {
+			toolName = item.Name
+		}
 		item.Type = "custom_tool_call"
 		item.ID = converter.itemIDs[index]
 		if item.CallID == "" {
 			item.CallID = strings.TrimPrefix(converter.itemIDs[index], "ctc_")
 		}
-		input := converter.context.CustomToolInputFromRaw(item.Name, json.RawMessage(compactJSON(inputJSON)))
+		input := converter.context.CustomToolInputFromRaw(toolName, json.RawMessage(compactJSON(inputJSON)))
+		item.Name = converter.context.OpenAINameForCustomTool(toolName)
 		item.Input = input
 		item.Status = "completed"
 		converter.setOutput(index, item)

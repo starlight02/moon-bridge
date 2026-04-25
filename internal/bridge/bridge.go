@@ -27,6 +27,8 @@ type ConversionContext struct {
 type CustomToolSpec struct {
 	GrammarDefinition string
 	Kind              CustomToolKind
+	OpenAIName        string
+	ApplyPatchAction  string
 }
 
 type CustomToolKind string
@@ -45,6 +47,22 @@ func (context ConversionContext) IsCustomTool(name string) bool {
 	return ok
 }
 
+func (context ConversionContext) OpenAINameForCustomTool(name string) string {
+	spec, ok := context.CustomTools[name]
+	if !ok || spec.OpenAIName == "" {
+		return name
+	}
+	return spec.OpenAIName
+}
+
+func (context ConversionContext) AnthropicToolChoiceName(name string) string {
+	spec, ok := context.CustomTools[name]
+	if !ok || spec.Kind != CustomToolKindApplyPatch {
+		return name
+	}
+	return applyPatchToolName(name, "batch")
+}
+
 func (context ConversionContext) CustomToolInputFromRaw(name string, raw json.RawMessage) string {
 	spec, ok := context.CustomTools[name]
 	if !ok {
@@ -52,7 +70,7 @@ func (context ConversionContext) CustomToolInputFromRaw(name string, raw json.Ra
 	}
 	switch spec.Kind {
 	case CustomToolKindApplyPatch:
-		return applyPatchInputFromProxyRaw(raw)
+		return applyPatchInputFromProxyRaw(raw, spec.ApplyPatchAction)
 	case CustomToolKindExec:
 		return execInputFromProxyRaw(raw)
 	default:
@@ -60,18 +78,19 @@ func (context ConversionContext) CustomToolInputFromRaw(name string, raw json.Ra
 	}
 }
 
-func (context ConversionContext) AnthropicInputForCustomTool(name string, input string) json.RawMessage {
+func (context ConversionContext) AnthropicToolUseForCustomTool(name string, input string) (string, json.RawMessage) {
 	spec, ok := context.CustomTools[name]
 	if !ok {
-		return customToolInputObject(input)
+		return name, customToolInputObject(input)
 	}
 	switch spec.Kind {
 	case CustomToolKindApplyPatch:
-		return applyPatchProxyInputFromGrammar(input)
+		toolName, action := applyPatchToolNameAndActionForGrammar(name, input)
+		return toolName, applyPatchProxyInputFromGrammar(input, action)
 	case CustomToolKindExec:
-		return execProxyInputFromGrammar(input)
+		return name, execProxyInputFromGrammar(input)
 	default:
-		return customToolInputObject(input)
+		return name, customToolInputObject(input)
 	}
 }
 
@@ -124,14 +143,14 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest) (anthropic.Me
 		system = append([]anthropic.ContentBlock{{Type: "text", Text: bridge.cfg.SystemPrompt}}, system...)
 	}
 	if len(messages) == 0 {
-		messages = []anthropic.Message{{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: ""}}}}
+		messages = []anthropic.Message{{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: " "}}}}
 	}
 
 	tools, err := bridge.convertTools(request.Tools)
 	if err != nil {
 		return anthropic.MessageRequest{}, cache.CacheCreationPlan{}, err
 	}
-	toolChoice, err := bridge.convertToolChoice(request.ToolChoice)
+	toolChoice, err := bridge.convertToolChoice(request.ToolChoice, conversionContext)
 	if err != nil {
 		return anthropic.MessageRequest{}, cache.CacheCreationPlan{}, err
 	}
@@ -230,7 +249,7 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 					Type:   "custom_tool_call",
 					ID:     customToolItemID(block.ID),
 					CallID: block.ID,
-					Name:   block.Name,
+					Name:   context.OpenAINameForCustomTool(block.Name),
 					Input:  context.CustomToolInputFromRaw(block.Name, block.Input),
 					Status: "completed",
 				})
@@ -356,14 +375,15 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 				Input: toolInput,
 			})
 		case item.Type == "custom_tool_call":
+			toolName := item.Name
 			toolInput := json.RawMessage(item.Arguments)
 			if len(toolInput) == 0 {
-				toolInput = context.AnthropicInputForCustomTool(item.Name, item.Input)
+				toolName, toolInput = context.AnthropicToolUseForCustomTool(item.Name, item.Input)
 			}
 			appendAssistantBlock(&messages, anthropic.ContentBlock{
 				Type:  "tool_use",
 				ID:    firstNonEmpty(item.CallID, item.ID),
-				Name:  item.Name,
+				Name:  toolName,
 				Input: toolInput,
 			})
 		case item.Type == "local_shell_call":
@@ -385,7 +405,7 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 			system = append(system, contentBlocksFromRaw(item.Content)...)
 		case item.Role == "assistant":
 			blocks := contentBlocksFromRaw(item.Content)
-			if isEmptyWebSearchPreludeBlocks(blocks) {
+			if len(blocks) == 0 || isEmptyWebSearchPreludeBlocks(blocks) {
 				continue
 			}
 			messages = append(messages, anthropic.Message{Role: "assistant", Content: blocks})
@@ -394,7 +414,11 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 			if role == "" {
 				role = "user"
 			}
-			messages = append(messages, anthropic.Message{Role: role, Content: contentBlocksFromRaw(item.Content)})
+			blocks := contentBlocksFromRaw(item.Content)
+			if len(blocks) == 0 {
+				continue
+			}
+			messages = append(messages, anthropic.Message{Role: role, Content: blocks})
 		}
 	}
 	return messages, system, nil
@@ -413,7 +437,7 @@ func (bridge *Bridge) convertTools(tools []openai.Tool) ([]anthropic.Tool, error
 				InputSchema: localShellSchema(),
 			})
 		case "custom":
-			converted = append(converted, anthropicCustomToolFromOpenAI(tool.Name, tool))
+			converted = append(converted, anthropicCustomToolsFromOpenAI(tool.Name, tool)...)
 		case "namespace":
 			for _, child := range tool.Tools {
 				switch child.Type {
@@ -424,10 +448,15 @@ func (bridge *Bridge) convertTools(tools []openai.Tool) ([]anthropic.Tool, error
 						child.Parameters,
 					))
 				case "custom":
-					converted = append(converted, anthropicCustomToolFromOpenAI(namespacedToolName(tool.Name, child.Name), child))
+					converted = append(converted, anthropicCustomToolsFromOpenAI(namespacedToolName(tool.Name, child.Name), child)...)
 				}
 			}
 		case "web_search", "web_search_preview":
+			if !bridge.cfg.WebSearchEnabled() {
+				log := logger.L().With("tool_type", tool.Type)
+				log.Debug("skipping web_search tool because provider support is disabled")
+				continue
+			}
 			converted = append(converted, anthropic.Tool{
 				Name:    "web_search",
 				Type:    "web_search_20250305",
@@ -464,9 +493,22 @@ func customToolSpecs(tools []openai.Tool, namespace string) map[string]CustomToo
 		switch tool.Type {
 		case "custom":
 			definition := customToolGrammarDefinition(tool)
-			specs[namespacedToolName(namespace, tool.Name)] = CustomToolSpec{
+			name := namespacedToolName(namespace, tool.Name)
+			kind := customToolKindFromGrammar(definition)
+			specs[name] = CustomToolSpec{
 				GrammarDefinition: definition,
-				Kind:              customToolKindFromGrammar(definition),
+				Kind:              kind,
+				OpenAIName:        name,
+			}
+			if kind == CustomToolKindApplyPatch {
+				for _, action := range applyPatchToolActions() {
+					specs[applyPatchToolName(name, action)] = CustomToolSpec{
+						GrammarDefinition: definition,
+						Kind:              kind,
+						OpenAIName:        name,
+						ApplyPatchAction:  action,
+					}
+				}
 			}
 		case "namespace":
 			for name, spec := range customToolSpecs(tool.Tools, namespacedToolName(namespace, tool.Name)) {
@@ -488,25 +530,21 @@ func anthropicToolFromOpenAIFunction(name string, description string, parameters
 	}
 }
 
-func anthropicCustomToolFromOpenAI(name string, tool openai.Tool) anthropic.Tool {
+func anthropicCustomToolsFromOpenAI(name string, tool openai.Tool) []anthropic.Tool {
 	definition := customToolGrammarDefinition(tool)
 	kind := customToolKindFromGrammar(definition)
 	if kind == CustomToolKindApplyPatch {
-		return anthropic.Tool{
-			Name:        name,
-			Description: customToolDescription(tool) + "\n\nMoon Bridge exposes this custom grammar tool as structured JSON. Provide patch operations; Moon Bridge will reconstruct the raw Codex apply_patch grammar before returning the tool call to Codex.",
-			InputSchema: applyPatchProxySchema(),
-		}
+		return anthropicApplyPatchProxyTools(name)
 	}
 	if kind == CustomToolKindExec {
-		return anthropic.Tool{
+		return []anthropic.Tool{{
 			Name:        name,
-			Description: customToolDescription(tool) + "\n\nMoon Bridge exposes this custom grammar tool as structured JSON. Put the JavaScript source in `source`; Moon Bridge will return that source as the raw Codex custom tool input.",
+			Description: execProxyDescription(),
 			InputSchema: execProxySchema(),
-		}
+		}}
 	}
 	inputDescription := customToolInputDescription(tool)
-	return anthropic.Tool{
+	return []anthropic.Tool{{
 		Name:        name,
 		Description: customToolDescription(tool),
 		InputSchema: map[string]any{
@@ -517,7 +555,7 @@ func anthropicCustomToolFromOpenAI(name string, tool openai.Tool) anthropic.Tool
 			}},
 			"required": []string{"input"},
 		},
-	}
+	}}
 }
 
 func customToolDescription(tool openai.Tool) string {
@@ -575,16 +613,113 @@ func isExecGrammar(definition string) bool {
 		(strings.Contains(definition, "pragma_source") && strings.Contains(definition, "plain_source"))
 }
 
+func applyPatchProxyDescription() string {
+	return strings.Join([]string{
+		"Edit files by providing structured JSON patch operations. Moon Bridge reconstructs the raw Codex apply_patch grammar before returning the tool call to Codex.",
+		"Use this tool for file edits instead of shell redirection when the change can be represented as operations.",
+		"Operation types: add_file creates a new file with content; delete_file removes a file; replace_file replaces an entire file with content; update_file edits an existing file with structured hunks.",
+		"For update_file hunks, each line uses op=context, add, or remove. For whole-file replacement, prefer replace_file or update_file with content.",
+	}, "\n\n")
+}
+
+func execProxyDescription() string {
+	return "Run the Codex Code Mode exec custom tool by providing structured JSON with a source string. Put the JavaScript source in source, including any // @exec pragmas if needed. Moon Bridge returns that source as the raw Codex custom tool input."
+}
+
+func anthropicApplyPatchProxyTools(name string) []anthropic.Tool {
+	return []anthropic.Tool{
+		{
+			Name:        applyPatchToolName(name, "add_file"),
+			Description: applyPatchActionDescription("add_file"),
+			InputSchema: applyPatchSingleOperationSchema("add_file"),
+		},
+		{
+			Name:        applyPatchToolName(name, "delete_file"),
+			Description: applyPatchActionDescription("delete_file"),
+			InputSchema: applyPatchSingleOperationSchema("delete_file"),
+		},
+		{
+			Name:        applyPatchToolName(name, "update_file"),
+			Description: applyPatchActionDescription("update_file"),
+			InputSchema: applyPatchSingleOperationSchema("update_file"),
+		},
+		{
+			Name:        applyPatchToolName(name, "replace_file"),
+			Description: applyPatchActionDescription("replace_file"),
+			InputSchema: applyPatchSingleOperationSchema("replace_file"),
+		},
+		{
+			Name:        applyPatchToolName(name, "batch"),
+			Description: applyPatchProxyDescription(),
+			InputSchema: applyPatchProxySchema(),
+		},
+	}
+}
+
+func applyPatchToolActions() []string {
+	return []string{"add_file", "delete_file", "update_file", "replace_file", "batch"}
+}
+
+func applyPatchToolName(base string, action string) string {
+	if action == "" {
+		return base
+	}
+	return base + "_" + action
+}
+
+func applyPatchActionDescription(action string) string {
+	switch action {
+	case "add_file":
+		return "Create one new file by providing a target path and full file content. Moon Bridge reconstructs the raw Codex apply_patch grammar before returning the tool call to Codex."
+	case "delete_file":
+		return "Delete one file by providing a target path. Moon Bridge reconstructs the raw Codex apply_patch grammar before returning the tool call to Codex."
+	case "update_file":
+		return "Edit one existing file with structured hunks. Each hunk line uses op=context, add, or remove. For whole-file replacement, use apply_patch_replace_file."
+	case "replace_file":
+		return "Replace one existing file by providing a target path and full new file content. Moon Bridge reconstructs this as a Codex delete plus add patch."
+	default:
+		return applyPatchProxyDescription()
+	}
+}
+
+func applyPatchSingleOperationSchema(action string) map[string]any {
+	properties := map[string]any{
+		"path": map[string]any{"type": "string", "description": "Target file path."},
+	}
+	required := []string{"path"}
+	switch action {
+	case "add_file", "replace_file":
+		properties["content"] = map[string]any{"type": "string", "description": "Full file content without patch prefixes."}
+		required = append(required, "content")
+	case "delete_file":
+	case "update_file":
+		properties["move_to"] = map[string]any{
+			"type":        "string",
+			"description": "Optional destination path for move operations.",
+		}
+		properties["hunks"] = applyPatchHunksSchema()
+		required = append(required, "hunks")
+	}
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           properties,
+		"required":             required,
+	}
+}
+
 func applyPatchProxySchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":                 "object",
+		"additionalProperties": false,
 		"properties": map[string]any{
 			"operations": map[string]any{
 				"type":        "array",
 				"description": "Structured patch operations. Moon Bridge reconstructs Codex apply_patch grammar from these operations.",
 				"minItems":    1,
 				"items": map[string]any{
-					"type": "object",
+					"type":                 "object",
+					"additionalProperties": false,
 					"properties": map[string]any{
 						"type": map[string]any{
 							"type":        "string",
@@ -603,24 +738,7 @@ func applyPatchProxySchema() map[string]any {
 						"hunks": map[string]any{
 							"type":        "array",
 							"description": "For update_file: structured hunks.",
-							"items": map[string]any{
-								"type": "object",
-								"properties": map[string]any{
-									"context": map[string]any{"type": "string", "description": "Optional @@ context header text."},
-									"lines": map[string]any{
-										"type": "array",
-										"items": map[string]any{
-											"type": "object",
-											"properties": map[string]any{
-												"op":   map[string]any{"type": "string", "enum": []string{"context", "add", "remove"}},
-												"text": map[string]any{"type": "string"},
-											},
-											"required": []string{"op", "text"},
-										},
-									},
-								},
-								"required": []string{"lines"},
-							},
+							"items":       applyPatchHunkSchema(),
 						},
 					},
 					"required": []string{"type", "path"},
@@ -628,6 +746,38 @@ func applyPatchProxySchema() map[string]any {
 			},
 		},
 		"required": []string{"operations"},
+	}
+}
+
+func applyPatchHunksSchema() map[string]any {
+	return map[string]any{
+		"type":        "array",
+		"description": "Structured update hunks.",
+		"minItems":    1,
+		"items":       applyPatchHunkSchema(),
+	}
+}
+
+func applyPatchHunkSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"context": map[string]any{"type": "string", "description": "Optional @@ context header text."},
+			"lines": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"op":   map[string]any{"type": "string", "enum": []string{"context", "add", "remove"}},
+						"text": map[string]any{"type": "string"},
+					},
+					"required": []string{"op", "text"},
+				},
+			},
+		},
+		"required": []string{"lines"},
 	}
 }
 
@@ -710,7 +860,12 @@ type applyPatchLineOp struct {
 	Text string `json:"text"`
 }
 
-func applyPatchInputFromProxyRaw(raw json.RawMessage) string {
+func applyPatchInputFromProxyRaw(raw json.RawMessage, action string) string {
+	if action != "" && action != "batch" {
+		if operation, ok := applyPatchOperationFromSingleProxyRaw(raw, action); ok {
+			return buildApplyPatchInput([]applyPatchOperation{operation})
+		}
+	}
 	var input applyPatchProxyInput
 	if err := json.Unmarshal(raw, &input); err != nil {
 		return normalizeApplyPatchInput(customToolInputFromRaw(raw))
@@ -729,8 +884,28 @@ func applyPatchInputFromProxyRaw(raw json.RawMessage) string {
 	}
 }
 
-func applyPatchProxyInputFromGrammar(input string) json.RawMessage {
+func applyPatchOperationFromSingleProxyRaw(raw json.RawMessage, action string) (applyPatchOperation, bool) {
+	var operation applyPatchOperation
+	if err := json.Unmarshal(raw, &operation); err != nil {
+		return applyPatchOperation{}, false
+	}
+	if operation.Type == "" {
+		operation.Type = action
+	}
+	if operation.Path == "" {
+		return applyPatchOperation{}, false
+	}
+	return operation, true
+}
+
+func applyPatchProxyInputFromGrammar(input string, action string) json.RawMessage {
 	if operations, ok := parseApplyPatchOperations(input); ok {
+		if action != "" && action != "batch" && len(operations) == 1 {
+			data, err := json.Marshal(applyPatchSingleProxyInput(operations[0], action))
+			if err == nil {
+				return data
+			}
+		}
 		data, err := json.Marshal(applyPatchProxyInput{Operations: operations})
 		if err == nil {
 			return data
@@ -741,6 +916,91 @@ func applyPatchProxyInputFromGrammar(input string) json.RawMessage {
 		return json.RawMessage(`{"raw_patch":""}`)
 	}
 	return data
+}
+
+func applyPatchSingleProxyInput(operation applyPatchOperation, action string) map[string]any {
+	input := map[string]any{"path": operation.Path}
+	if operation.MoveTo != "" {
+		input["move_to"] = operation.MoveTo
+	}
+	switch action {
+	case "add_file", "replace_file":
+		input["content"] = operation.Content
+	case "update_file":
+		if len(operation.Hunks) > 0 {
+			input["hunks"] = operation.Hunks
+		} else if len(operation.Lines) > 0 {
+			input["hunks"] = []applyPatchHunk{{Lines: operation.Lines}}
+		} else if strings.TrimSpace(operation.Changes) != "" {
+			input["hunks"] = parseApplyPatchHunksFromChanges(operation.Changes)
+		}
+	}
+	return input
+}
+
+func applyPatchToolNameAndActionForGrammar(name string, input string) (string, string) {
+	operations, ok := parseApplyPatchOperations(input)
+	if !ok {
+		return applyPatchToolName(name, "batch"), "batch"
+	}
+	action := applyPatchActionForOperations(operations)
+	return applyPatchToolName(name, action), action
+}
+
+func applyPatchActionForOperations(operations []applyPatchOperation) string {
+	if len(operations) != 1 {
+		return "batch"
+	}
+	operation := operations[0]
+	switch operation.Type {
+	case "add_file", "add":
+		return "add_file"
+	case "delete_file", "delete":
+		return "delete_file"
+	case "replace_file", "replace":
+		return "replace_file"
+	case "update_file", "update":
+		if operation.Content != "" && len(operation.Hunks) == 0 && len(operation.Lines) == 0 && strings.TrimSpace(operation.Changes) == "" && operation.MoveTo == "" {
+			return "replace_file"
+		}
+		return "update_file"
+	default:
+		return "batch"
+	}
+}
+
+func parseApplyPatchHunksFromChanges(changes string) []applyPatchHunk {
+	lines := strings.Split(strings.TrimRight(strings.ReplaceAll(changes, "\r\n", "\n"), "\n"), "\n")
+	hunks := make([]applyPatchHunk, 0)
+	current := applyPatchHunk{}
+	hasCurrent := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "@@") {
+			if hasCurrent {
+				hunks = append(hunks, current)
+			}
+			current = applyPatchHunk{Context: strings.TrimSpace(strings.TrimPrefix(line, "@@"))}
+			hasCurrent = true
+			continue
+		}
+		if !hasCurrent {
+			current = applyPatchHunk{}
+			hasCurrent = true
+		}
+		lineOp := applyPatchLineOp{Op: "context", Text: line}
+		if strings.HasPrefix(line, "+") {
+			lineOp = applyPatchLineOp{Op: "add", Text: strings.TrimPrefix(line, "+")}
+		} else if strings.HasPrefix(line, "-") {
+			lineOp = applyPatchLineOp{Op: "remove", Text: strings.TrimPrefix(line, "-")}
+		} else if strings.HasPrefix(line, " ") {
+			lineOp.Text = strings.TrimPrefix(line, " ")
+		}
+		current.Lines = append(current.Lines, lineOp)
+	}
+	if hasCurrent {
+		hunks = append(hunks, current)
+	}
+	return hunks
 }
 
 func buildApplyPatchInput(operations []applyPatchOperation) string {
@@ -962,7 +1222,7 @@ func namespacedToolName(namespace string, name string) string {
 	return namespace + "_" + name
 }
 
-func (bridge *Bridge) convertToolChoice(raw json.RawMessage) (anthropic.ToolChoice, error) {
+func (bridge *Bridge) convertToolChoice(raw json.RawMessage, context ConversionContext) (anthropic.ToolChoice, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return anthropic.ToolChoice{}, nil
 	}
@@ -992,6 +1252,9 @@ func (bridge *Bridge) convertToolChoice(raw json.RawMessage) (anthropic.ToolChoi
 		name = object.Function.Name
 	}
 	if name != "" {
+		if mapped := context.AnthropicToolChoiceName(name); mapped != "" {
+			name = mapped
+		}
 		return anthropic.ToolChoice{Type: "tool", Name: name}, nil
 	}
 	return anthropic.ToolChoice{}, invalidRequest("unsupported tool_choice", "tool_choice", "unsupported_parameter")
@@ -1093,12 +1356,15 @@ type inputItem struct {
 
 func contentBlocksFromRaw(raw json.RawMessage) []anthropic.ContentBlock {
 	if len(raw) == 0 || string(raw) == "null" {
-		return []anthropic.ContentBlock{{Type: "text", Text: ""}}
+		return nil
 	}
 	trimmed := strings.TrimSpace(string(raw))
 	if strings.HasPrefix(trimmed, "\"") {
 		var text string
 		_ = json.Unmarshal(raw, &text)
+		if text == "" {
+			return nil
+		}
 		return []anthropic.ContentBlock{{Type: "text", Text: text}}
 	}
 	var parts []struct {
@@ -1109,12 +1375,16 @@ func contentBlocksFromRaw(raw json.RawMessage) []anthropic.ContentBlock {
 		blocks := make([]anthropic.ContentBlock, 0, len(parts))
 		for _, part := range parts {
 			if part.Type == "input_text" || part.Type == "text" || part.Type == "output_text" {
+				if part.Text == "" {
+					continue
+				}
 				blocks = append(blocks, anthropic.ContentBlock{Type: "text", Text: part.Text})
 			}
 		}
-		if len(blocks) > 0 {
-			return blocks
-		}
+		return blocks
+	}
+	if trimmed == "" {
+		return nil
 	}
 	return []anthropic.ContentBlock{{Type: "text", Text: trimmed}}
 }
