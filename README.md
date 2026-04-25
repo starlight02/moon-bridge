@@ -16,6 +16,8 @@ cp config.example.yml config.yml
 `provider.web_search.max_uses` 控制 Codex `web_search` 转成 Anthropic server-side `web_search_20250305` 时允许的最大搜索次数。
 所有模式都使用 `server.addr` 监听，默认端口为 `38440`。
 
+缓存配置中，`explicit_cache_breakpoints` 会在工具、system、messages 的稳定块上注入块级 `cache_control`，这与 Claude Code 抓包形态一致；`automatic_prompt_cache` 才会额外注入顶层 request `cache_control`，只建议在上游 Provider 明确支持时开启。`mode: "automatic"` 同时开启这两个开关时，实际会按 `hybrid` 计划执行。
+
 需要排查转发细节时，可以打开 trace：
 
 ```yaml

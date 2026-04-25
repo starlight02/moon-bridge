@@ -19,13 +19,15 @@ const (
 )
 
 type PlannerConfig struct {
-	Mode              string
-	TTL               string
-	PromptCaching     bool
-	MaxBreakpoints    int
-	MinCacheTokens    int
-	ExpectedReuse     int
-	MinimumValueScore int
+	Mode                     string
+	TTL                      string
+	PromptCaching            bool
+	AutomaticPromptCache     bool
+	ExplicitCacheBreakpoints bool
+	MaxBreakpoints           int
+	MinCacheTokens           int
+	ExpectedReuse            int
+	MinimumValueScore        int
 }
 
 type PlanInput struct {
@@ -162,8 +164,14 @@ func (planner *Planner) Plan(input PlanInput) (CacheCreationPlan, error) {
 		return CacheCreationPlan{Mode: "off", TTL: planner.cfg.TTL, Reason: "below_minimum_value_score"}, nil
 	}
 
+	useAutomatic := planner.cfg.AutomaticPromptCache && (planner.cfg.Mode == "automatic" || planner.cfg.Mode == "hybrid")
+	useExplicit := planner.cfg.ExplicitCacheBreakpoints && (planner.cfg.Mode == "automatic" || planner.cfg.Mode == "explicit" || planner.cfg.Mode == "hybrid")
+	if !useAutomatic && !useExplicit {
+		return CacheCreationPlan{Mode: "off", TTL: planner.cfg.TTL, Reason: "cache_controls_disabled"}, nil
+	}
+
 	plan := CacheCreationPlan{
-		Mode:       planner.cfg.Mode,
+		Mode:       effectiveMode(useAutomatic, useExplicit),
 		TTL:        planner.cfg.TTL,
 		LocalKey:   localKey(input, planner.cfg.TTL),
 		WarmPolicy: "none",
@@ -174,18 +182,36 @@ func (planner *Planner) Plan(input PlanInput) (CacheCreationPlan, error) {
 		}
 	}
 
-	if plan.Mode == "automatic" {
-		return plan, nil
-	}
-
-	plan.Breakpoints = planner.breakpoints(input)
-	if plan.Mode == "explicit" || plan.Mode == "hybrid" {
+	if useExplicit {
+		plan.Breakpoints = planner.breakpoints(input)
 		if len(plan.Breakpoints) == 0 {
-			plan.Mode = "off"
-			plan.Reason = "no_stable_breakpoints"
+			if useAutomatic {
+				plan.Mode = "automatic"
+				plan.Reason = "no_stable_breakpoints"
+				return plan, nil
+			}
+			return CacheCreationPlan{
+				Mode:     "off",
+				TTL:      planner.cfg.TTL,
+				LocalKey: plan.LocalKey,
+				Reason:   "no_stable_breakpoints",
+			}, nil
 		}
 	}
 	return plan, nil
+}
+
+func effectiveMode(useAutomatic bool, useExplicit bool) string {
+	switch {
+	case useAutomatic && useExplicit:
+		return "hybrid"
+	case useAutomatic:
+		return "automatic"
+	case useExplicit:
+		return "explicit"
+	default:
+		return "off"
+	}
 }
 
 func (planner *Planner) breakpoints(input PlanInput) []CacheBreakpoint {

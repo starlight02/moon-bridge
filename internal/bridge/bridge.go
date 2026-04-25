@@ -425,13 +425,15 @@ func (bridge *Bridge) planCache(request openai.ResponsesRequest, converted anthr
 	systemHash, _ := cache.CanonicalHash(converted.System)
 	messagesHash, _ := cache.CanonicalHash(converted.Messages)
 	planner := cache.NewPlannerWithRegistry(cache.PlannerConfig{
-		Mode:              cfg.Mode,
-		TTL:               ttl,
-		PromptCaching:     cfg.PromptCaching,
-		MaxBreakpoints:    cfg.MaxBreakpoints,
-		MinCacheTokens:    cfg.MinCacheTokens,
-		ExpectedReuse:     cfg.ExpectedReuse,
-		MinimumValueScore: cfg.MinimumValueScore,
+		Mode:                     cfg.Mode,
+		TTL:                      ttl,
+		PromptCaching:            cfg.PromptCaching,
+		AutomaticPromptCache:     cfg.AutomaticPromptCache,
+		ExplicitCacheBreakpoints: cfg.ExplicitCacheBreakpoints,
+		MaxBreakpoints:           cfg.MaxBreakpoints,
+		MinCacheTokens:           cfg.MinCacheTokens,
+		ExpectedReuse:            cfg.ExpectedReuse,
+		MinimumValueScore:        cfg.MinimumValueScore,
 	}, bridge.registry)
 	return planner.Plan(cache.PlanInput{
 		ProviderID:        "anthropic",

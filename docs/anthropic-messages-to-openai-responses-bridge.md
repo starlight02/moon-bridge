@@ -90,7 +90,7 @@ internal/store         # 可选：store=true / previous_response_id
 | `explicit` | 在稳定前缀的最后一个 content block / tool / system block 上添加 `cache_control`。 | 大系统提示、工具定义、长文档、示例集等静态前缀。 |
 | `hybrid` | 顶层自动缓存 + 少量显式断点。 | 同时缓存工具/系统提示和增长中的对话历史。 |
 
-默认建议使用 `automatic`，但遇到“前缀后面带时间戳、用户动态上下文、随机 tool 参数顺序”等场景必须切换到 `explicit`，把断点放在最后一个稳定块上。
+`automatic_prompt_cache` 控制顶层 request `cache_control`，`explicit_cache_breakpoints` 控制块级断点。Claude Code 抓包通常是块级断点而非顶层缓存，因此默认更适合 `explicit`；只有上游 Provider 明确支持顶层自动 prompt cache 时，再启用 `automatic_prompt_cache` 或切到 `hybrid`。如果 `mode: "automatic"` 同时开启两个开关，planner 会生成实际 `hybrid` 计划。
 
 ### 缓存创建方案
 
@@ -178,9 +178,9 @@ type CacheBreakpoint struct {
 1. 先构造不带缓存字段的 Anthropic request。
 2. 对 `tools`、`system`、`messages` 做 canonical JSON 编码和哈希。
 3. 运行 `CacheCreationPlanner` 得到 `CacheCreationPlan`。
-4. `automatic`：在顶层请求设置 `cache_control:{type:"ephemeral"}`；TTL 为 `1h` 时附加 `ttl:"1h"`。
-5. `explicit`：在选中的 tool / system block / content block 上设置 `cache_control:{type:"ephemeral"}`。
-6. `hybrid`：先放显式稳定断点，再按断点数量余量决定是否加顶层 automatic。
+4. `automatic_prompt_cache=true` 且策略允许时，在顶层请求设置 `cache_control:{type:"ephemeral"}`；TTL 为 `1h` 时附加 `ttl:"1h"`。
+5. `explicit_cache_breakpoints=true` 且策略允许时，在选中的 tool / system block / content block 上设置 `cache_control:{type:"ephemeral"}`。
+6. `hybrid` 或 `automatic` 同时开启显式断点时，会同时注入顶层自动缓存和块级稳定断点。
 7. 注入完成后再次 canonical JSON 编码，生成 `request_fingerprint` 写入日志，便于排查命中率。
 
 示例：缓存工具和 system，最新用户问题不缓存。
@@ -410,8 +410,10 @@ provider:
     json_schema_strict: false
     store_responses: false
   cache:
-    mode: "automatic"          # off / automatic / explicit / hybrid
+    mode: "explicit"           # off / automatic / explicit / hybrid
     ttl: "5m"                  # 5m / 1h
+    automatic_prompt_cache: false
+    explicit_cache_breakpoints: true
     allow_retention_downgrade: false
     max_breakpoints: 4
 ```

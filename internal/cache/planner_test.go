@@ -30,13 +30,14 @@ func TestCanonicalHashIsStableAcrossMapOrder(t *testing.T) {
 
 func TestPlannerCreatesExplicitBreakpointsInPrefixOrder(t *testing.T) {
 	planner := cache.NewPlanner(cache.PlannerConfig{
-		Mode:              "explicit",
-		TTL:               "1h",
-		PromptCaching:     true,
-		MaxBreakpoints:    4,
-		MinCacheTokens:    10,
-		ExpectedReuse:     2,
-		MinimumValueScore: 20,
+		Mode:                     "explicit",
+		TTL:                      "1h",
+		PromptCaching:            true,
+		ExplicitCacheBreakpoints: true,
+		MaxBreakpoints:           4,
+		MinCacheTokens:           10,
+		ExpectedReuse:            2,
+		MinimumValueScore:        20,
 	})
 
 	plan, err := planner.Plan(cache.PlanInput{
@@ -70,6 +71,72 @@ func TestPlannerCreatesExplicitBreakpointsInPrefixOrder(t *testing.T) {
 	}
 	if plan.LocalKey == "" {
 		t.Fatal("LocalKey is empty")
+	}
+}
+
+func TestPlannerAutomaticWithExplicitBreakpointsBecomesHybrid(t *testing.T) {
+	planner := cache.NewPlanner(cache.PlannerConfig{
+		Mode:                     "automatic",
+		TTL:                      "5m",
+		PromptCaching:            true,
+		AutomaticPromptCache:     true,
+		ExplicitCacheBreakpoints: true,
+		MaxBreakpoints:           4,
+		MinCacheTokens:           1,
+	})
+
+	plan, err := planner.Plan(cache.PlanInput{
+		ProviderID:        "anthropic",
+		Model:             "claude-test",
+		ToolsHash:         "tools-hash",
+		SystemHash:        "system-hash",
+		MessagePrefixHash: "messages-hash",
+		ToolCount:         1,
+		SystemBlockCount:  2,
+		MessageCount:      3,
+		EstimatedTokens:   1000,
+	})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+
+	if plan.Mode != "hybrid" {
+		t.Fatalf("Mode = %q, want hybrid", plan.Mode)
+	}
+	if len(plan.Breakpoints) != 3 {
+		t.Fatalf("Breakpoints = %+v", plan.Breakpoints)
+	}
+}
+
+func TestPlannerAutomaticCanDisableTopLevelCache(t *testing.T) {
+	planner := cache.NewPlanner(cache.PlannerConfig{
+		Mode:                     "automatic",
+		TTL:                      "5m",
+		PromptCaching:            true,
+		AutomaticPromptCache:     false,
+		ExplicitCacheBreakpoints: true,
+		MaxBreakpoints:           4,
+		MinCacheTokens:           1,
+	})
+
+	plan, err := planner.Plan(cache.PlanInput{
+		ProviderID:        "anthropic",
+		Model:             "claude-test",
+		SystemHash:        "system-hash",
+		MessagePrefixHash: "messages-hash",
+		SystemBlockCount:  1,
+		MessageCount:      1,
+		EstimatedTokens:   1000,
+	})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+
+	if plan.Mode != "explicit" {
+		t.Fatalf("Mode = %q, want explicit", plan.Mode)
+	}
+	if len(plan.Breakpoints) != 2 {
+		t.Fatalf("Breakpoints = %+v", plan.Breakpoints)
 	}
 }
 

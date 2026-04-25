@@ -16,11 +16,12 @@ func testBridge() *bridge.Bridge {
 		DefaultMaxTokens: 1024,
 		ModelMap:         map[string]string{"gpt-test": "claude-test"},
 		Cache: config.CacheConfig{
-			Mode:           "explicit",
-			TTL:            "1h",
-			PromptCaching:  true,
-			MaxBreakpoints: 4,
-			MinCacheTokens: 1,
+			Mode:                     "explicit",
+			TTL:                      "1h",
+			PromptCaching:            true,
+			ExplicitCacheBreakpoints: true,
+			MaxBreakpoints:           4,
+			MinCacheTokens:           1,
 		},
 	}, cache.NewMemoryRegistry())
 }
@@ -65,6 +66,82 @@ func TestToAnthropicConvertsTextToolsToolChoiceAndCache(t *testing.T) {
 	}
 	if converted.Tools[0].CacheControl == nil || converted.System[0].CacheControl == nil {
 		t.Fatalf("cache controls not injected: tools=%+v system=%+v", converted.Tools, converted.System)
+	}
+}
+
+func TestToAnthropicAutomaticCacheAddsExplicitBreakpoints(t *testing.T) {
+	bridgeUnderTest := bridge.New(config.Config{
+		DefaultMaxTokens: 1024,
+		ModelMap:         map[string]string{"gpt-test": "claude-test"},
+		Cache: config.CacheConfig{
+			Mode:                     "automatic",
+			TTL:                      "5m",
+			PromptCaching:            true,
+			AutomaticPromptCache:     true,
+			ExplicitCacheBreakpoints: true,
+			MaxBreakpoints:           4,
+			MinCacheTokens:           1,
+		},
+	}, cache.NewMemoryRegistry())
+
+	converted, plan, err := bridgeUnderTest.ToAnthropic(openai.ResponsesRequest{
+		Model:        "gpt-test",
+		Instructions: "stable system prompt",
+		Input:        json.RawMessage(`"current question"`),
+	})
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+
+	if plan.Mode != "hybrid" {
+		t.Fatalf("plan.Mode = %q, want hybrid", plan.Mode)
+	}
+	if converted.CacheControl == nil {
+		t.Fatal("top-level cache_control is nil")
+	}
+	if converted.System[0].CacheControl == nil {
+		t.Fatalf("system cache_control not injected: %+v", converted.System)
+	}
+	if converted.Messages[0].Content[0].CacheControl == nil {
+		t.Fatalf("message cache_control not injected: %+v", converted.Messages)
+	}
+}
+
+func TestToAnthropicCanDisableTopLevelAutomaticCache(t *testing.T) {
+	bridgeUnderTest := bridge.New(config.Config{
+		DefaultMaxTokens: 1024,
+		ModelMap:         map[string]string{"gpt-test": "claude-test"},
+		Cache: config.CacheConfig{
+			Mode:                     "automatic",
+			TTL:                      "5m",
+			PromptCaching:            true,
+			AutomaticPromptCache:     false,
+			ExplicitCacheBreakpoints: true,
+			MaxBreakpoints:           4,
+			MinCacheTokens:           1,
+		},
+	}, cache.NewMemoryRegistry())
+
+	converted, plan, err := bridgeUnderTest.ToAnthropic(openai.ResponsesRequest{
+		Model:        "gpt-test",
+		Instructions: "stable system prompt",
+		Input:        json.RawMessage(`"current question"`),
+	})
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+
+	if plan.Mode != "explicit" {
+		t.Fatalf("plan.Mode = %q, want explicit", plan.Mode)
+	}
+	if converted.CacheControl != nil {
+		t.Fatalf("top-level cache_control = %+v, want nil", converted.CacheControl)
+	}
+	if converted.System[0].CacheControl == nil {
+		t.Fatalf("system cache_control not injected: %+v", converted.System)
+	}
+	if converted.Messages[0].Content[0].CacheControl == nil {
+		t.Fatalf("message cache_control not injected: %+v", converted.Messages)
 	}
 }
 
