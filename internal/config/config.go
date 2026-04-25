@@ -29,6 +29,7 @@ type Config struct {
 	TraceRequests     bool
 	LogLevel          string
 	LogFormat         string
+	SystemPrompt      string
 	DefaultModel      string
 	ProviderBaseURL   string
 	ProviderAPIKey    string
@@ -82,6 +83,7 @@ type FileConfig struct {
 	Server        ServerFileConfig    `yaml:"server"`
 	Provider      ProviderFileConfig  `yaml:"provider"`
 	Cache         CacheFileConfig     `yaml:"cache"`
+	SystemPrompt  string              `yaml:"system_prompt"`
 	Developer     DeveloperFileConfig `yaml:"developer"`
 }
 
@@ -181,6 +183,7 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 		TraceRequests:     fileConfig.TraceRequests,
 		LogLevel:          valueOrDefault(strings.TrimSpace(fileConfig.Log.Level), "info"),
 		LogFormat:         valueOrDefault(strings.TrimSpace(fileConfig.Log.Format), "text"),
+		SystemPrompt:      strings.TrimSpace(fileConfig.SystemPrompt),
 		DefaultModel:      strings.TrimSpace(fileConfig.Provider.DefaultModel),
 		ProviderBaseURL:   strings.TrimRight(strings.TrimSpace(fileConfig.Provider.BaseURL), "/"),
 		ProviderAPIKey:    strings.TrimSpace(fileConfig.Provider.APIKey),

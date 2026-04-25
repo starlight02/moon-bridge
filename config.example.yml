@@ -3,6 +3,11 @@ mode: "Transform" # Transform / CaptureAnthropic / CaptureResponse
 log:
   level: "info"  # debug / info / warn / error
   format: "text" # text / json
+
+# 桥接层注入的系统提示词，会追加到 Anthropic system 字段末尾。
+# 用于向非 Codex 训练的模型传递项目特定指令（如沙箱权限提升指南）。
+# system_prompt: ""
+
 server:
   addr: "127.0.0.1:38440"
 

@@ -120,6 +120,9 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest) (anthropic.Me
 	if request.Instructions != "" {
 		system = append([]anthropic.ContentBlock{{Type: "text", Text: request.Instructions}}, system...)
 	}
+	if bridge.cfg.SystemPrompt != "" {
+		system = append([]anthropic.ContentBlock{{Type: "text", Text: bridge.cfg.SystemPrompt}}, system...)
+	}
 	if len(messages) == 0 {
 		messages = []anthropic.Message{{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: ""}}}}
 	}
