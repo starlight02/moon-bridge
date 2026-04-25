@@ -1,187 +1,187 @@
-# Anthropic Messages to OpenAI Responses Bridge
+# Anthropic Messages 到 OpenAI Responses 桥接器
 
-A protocol translation layer that exposes an OpenAI Responses-compatible API (`POST /v1/responses`) while forwarding requests to any Anthropic Messages-compatible provider. The bridge handles request/response mapping, tool call translation, prompt caching, streaming, and error normalization.
+一个协议转换层，对外暴露兼容 OpenAI Responses 的 API（`POST /v1/responses`），同时将请求转发给任意兼容 Anthropic Messages 的上游提供商。桥接器负责请求/响应映射、工具调用转换、提示缓存、流式传输和错误标准化。
 
-Supported clients include [Codex CLI](https://github.com/openai/codex), custom toolchains, and any application built against the OpenAI Responses API that needs to route through an Anthropic Messages provider.
+支持的客户端包括 [Codex CLI](https://github.com/openai/codex)、自定义工具链，以及任何基于 OpenAI Responses API 构建、需要路由到 Anthropic Messages 提供商的应用程序。
 
-## Architecture
+## 架构
 
 ```mermaid
 flowchart TD
-    A[OpenAI Responses Client] -->|POST /v1/responses| B[HTTP Handler<br/>/v1/responses, /responses]
-    B --> C[Bridge<br/>Protocol Translator]
-    C --> D[Provider Client]
-    D -->|POST /v1/messages| E[(Anthropic Provider)]
+    A[OpenAI Responses 客户端] -->|POST /v1/responses| B[HTTP 处理器<br/>/v1/responses, /responses]
+    B --> C[桥接器<br/>协议转换器]
+    C --> D[提供商客户端]
+    D -->|POST /v1/messages| E[(Anthropic 提供商)]
     D -->|POST /v1/messages?stream=true| E
 
-    subgraph BridgeDetails [Bridge Capabilities]
+    subgraph BridgeDetails [桥接器能力]
         direction LR
-        C1[Request<br/>OpenAI → Anthropic]
-        C2[Response<br/>Anthropic → OpenAI]
-        C3[Stream<br/>SSE conversion]
-        C4[Tool<br/>function/custom mapping]
-        C5[Cache<br/>planner + injection]
-        C6[Error<br/>normalization]
+        C1[请求<br/>OpenAI → Anthropic]
+        C2[响应<br/>Anthropic → OpenAI]
+        C3[流式<br/>SSE 转换]
+        C4[工具<br/>function/custom 映射]
+        C5[缓存<br/>规划器 + 注入]
+        C6[错误<br/>标准化]
     end
 
     C --> BridgeDetails
 ```
 
-Package layout (Go module `moonbridge`):
+包结构（Go 模块 `moonbridge`）：
 
 ```
-internal/openai        OpenAI Responses DTOs and SSE event types
-internal/anthropic     Anthropic Messages DTOs and HTTP client
-internal/bridge        Protocol conversion, error mapping, streaming state machine
-internal/cache         Cache creation planner, breakpoint injection, usage normalization
-internal/config        YAML config loading and validation
-internal/server        HTTP handlers for /v1/responses and /responses
-internal/proxy         Transparent proxy modes (CaptureResponse, CaptureAnthropic)
-internal/trace         Request/response dump to local filesystem
-internal/app           Application assembly and lifecycle
-internal/e2e           Real provider end-to-end tests
+internal/openai        OpenAI Responses DTO 和 SSE 事件类型
+internal/anthropic     Anthropic Messages DTO 和 HTTP 客户端
+internal/bridge        协议转换、错误映射、流式状态机
+internal/cache         缓存创建规划器、断点注入、用量标准化
+internal/config        YAML 配置加载和校验
+internal/server        /v1/responses 和 /responses 的 HTTP 处理器
+internal/proxy         透明代理模式（CaptureResponse、CaptureAnthropic）
+internal/trace         请求/响应转储到本地文件系统
+internal/app           应用组装和生命周期管理
+internal/e2e           真实提供商端到端测试
 ```
 
-## Configuration
+## 配置
 
-YAML-based, documented via [config.example.yml](/home/zhiyi/Projects/misc/MoonBridge/config.example.yml). The config file is loaded from `config.yml` by default, overridable via the `MOONBRIDGE_CONFIG` environment variable. Sensitive credentials and local overrides go into `.gitignore`-d `config.yml`; the example file is always checked in.
+基于 YAML，详见 [config.example.yml](/home/zhiyi/Projects/misc/MoonBridge/config.example.yml)。默认从 `config.yml` 加载配置文件，可通过 `MOONBRIDGE_CONFIG` 环境变量覆盖。敏感凭证和本地覆盖项放入被 `.gitignore` 忽略的 `config.yml`；示例文件始终纳入版本控制。
 
-### Modes
+### 模式
 
-| Mode | Purpose |
+| 模式 | 用途 |
 | --- | --- |
-| `Transform` | Protocol translation: OpenAI Responses in, Anthropic Messages out. The primary use case. |
-| `CaptureResponse` | Transparent proxy that captures real OpenAI Responses API traffic without conversion. Use for protocol alignment testing. |
-| `CaptureAnthropic` | Transparent proxy that captures real Anthropic Messages API traffic without conversion. Use for understanding native client behavior. |
+| `Transform` | 协议转换：OpenAI Responses 进，Anthropic Messages 出。主要使用场景。 |
+| `CaptureResponse` | 透明代理，捕获真实的 OpenAI Responses API 流量而不做转换。用于协议对齐测试。 |
+| `CaptureAnthropic` | 透明代理，捕获真实的 Anthropic Messages API 流量而不做转换。用于理解原生客户端行为。 |
 
-## Request Mapping
+## 请求映射
 
-| OpenAI Responses Field | Anthropic Messages Field | Handling |
+| OpenAI Responses 字段 | Anthropic Messages 字段 | 处理方式 |
 | --- | --- | --- |
-| `model` | `model` | Alias mapping via config; model names are not hardcoded. |
-| `instructions` | `system` | Highest-priority system instruction; developer role input prepended. |
-| `input` (string) | `messages[0].content` | Single user text message. |
-| `input[].role=user` | `messages[].role=user` | Text blocks passed through; images converted if provider supports it. |
-| `input[].role=assistant` | `messages[].role=assistant` | Text content and tool_use blocks from history. |
-| `function_call_output` / tool outputs | `role=user` + `tool_result` | `call_id` → `tool_use_id`. |
-| `max_output_tokens` | `max_tokens` | Default injected from config when absent. |
-| `temperature` / `top_p` | Same-named | Passed through directly; unsupported parameters return error. |
-| `stop` | `stop_sequences` | Normalized to string array. |
-| `stream` | `stream` | Passed through; switches SSE converter. |
-| `tool_choice:"auto"` | `tool_choice:auto` or omitted | Prefer native auto. |
-| `tool_choice:"none"` | `tool_choice:none` or omit tools | If provider doesn't support none, tools are omitted. |
-| `tool_choice:"required"` | `tool_choice:any` | Any tool must be called. |
-| `tool_choice:{function:{name}}` | `tool_choice:{type:"tool",name}` | Named tool. |
+| `model` | `model` | 通过配置进行别名映射；模型名称不做硬编码。 |
+| `instructions` | `system` | 最高优先级的系统指令；developer 角色输入前置。 |
+| `input`（字符串） | `messages[0].content` | 单条用户文本消息。 |
+| `input[].role=user` | `messages[].role=user` | 文本块直接透传；图片在提供商支持时转换。 |
+| `input[].role=assistant` | `messages[].role=assistant` | 历史记录中的文本内容和 tool_use 块。 |
+| `function_call_output` / 工具输出 | `role=user` + `tool_result` | `call_id` → `tool_use_id`。 |
+| `max_output_tokens` | `max_tokens` | 缺失时从配置注入默认值。 |
+| `temperature` / `top_p` | 同名参数 | 直接透传；不支持的参数返回错误。 |
+| `stop` | `stop_sequences` | 标准化为字符串数组。 |
+| `stream` | `stream` | 直接透传；切换 SSE 转换器。 |
+| `tool_choice:"auto"` | `tool_choice:auto` 或省略 | 优先使用原生 auto。 |
+| `tool_choice:"none"` | `tool_choice:none` 或省略工具 | 如果提供商不支持 none，则省略工具。 |
+| `tool_choice:"required"` | `tool_choice:any` | 必须调用任意工具。 |
+| `tool_choice:{function:{name}}` | `tool_choice:{type:"tool",name}` | 指定工具。 |
 
-### Input Normalization
+### 输入标准化
 
-1. `input` is parsed as a string or array of items.
-2. `system`/`developer` role items are extracted into Anthropic's top-level `system` field.
-3. `user`/`assistant` message order is preserved without cross-turn merging.
-4. Multi-modal content (`input_text`, `input_image`) is processed according to the provider capability profile.
-5. `previous_response_id` requires `store=true` and active local storage; otherwise returns 400.
+1. `input` 被解析为字符串或条目数组。
+2. `system`/`developer` 角色条目被提取到 Anthropic 的顶层 `system` 字段。
+3. `user`/`assistant` 消息顺序被保留，不做跨轮次合并。
+4. 多模态内容（`input_text`、`input_image`）按提供商能力画像处理。
+5. `previous_response_id` 需要 `store=true` 和活跃的本地存储；否则返回 400。
 
-### Custom Tools and Codex Compatibility
+### 自定义工具与 Codex 兼容性
 
-When bridging Codex CLI traffic, the bridge handles OpenAI `custom` grammar tools that cannot be treated as plain JSON functions:
+在桥接 Codex CLI 流量时，桥接器处理无法当作普通 JSON 函数对待的 OpenAI `custom` 语法工具：
 
-| Instruction Kind | Anthropic Schema | Reverse Mapping |
+| 指令类型 | Anthropic 结构 | 反向映射 |
 | --- | --- | --- |
-| `apply_patch` | Structured `operations` array with paths, hunks, and line operations | Reconstructed into `*** Begin Patch` / `*** End Patch` raw grammar, with normalization of trailing markers (`+*** End Patch` → `*** End Patch`). |
-| `exec` (Code Mode) | `{source: string}` | `source` field returned as raw custom tool input. |
-| Other custom / freeform | `{input: string}` | Raw input string extracted from `input` field. |
+| `apply_patch` | 结构化 `operations` 数组，包含路径、hunks 和行操作 | 重建为 `*** Begin Patch` / `*** End Patch` 原始语法，并标准化尾部标记（`+*** End Patch` → `*** End Patch`）。 |
+| `exec`（代码模式） | `{source: string}` | `source` 字段作为原始自定义工具输入返回。 |
+| 其他 custom / freeform | `{input: string}` | 从 `input` 字段提取原始输入字符串。 |
 
-`namespace` tools are flattened into `namespace__tool` naming for Anthropic. On the response side, `custom_tool_call` items are emitted with `response.custom_tool_call_input.delta` streaming events.
+`namespace` 工具在 Anthropic 侧被展平为 `namespace__tool` 命名。在响应侧，`custom_tool_call` 条目随 `response.custom_tool_call_input.delta` 流式事件发出。
 
-### Web Search Bridging
+### Web Search 桥接
 
-OpenAI `web_search`/`web_search_preview` tools are converted to Anthropic `web_search_20250305` server tools. On the response side, `server_tool_use:web_search` is mapped back to Codex `web_search_call` output items. Empty search results and preamble messages (`Search results for query:`) are filtered to avoid polluting conversation history.
+OpenAI `web_search`/`web_search_preview` 工具被转换为 Anthropic `web_search_20250305` 服务端工具。在响应侧，`server_tool_use:web_search` 被映射回 Codex `web_search_call` 输出条目。空搜索结果和前导消息（`Search results for query:`）会被过滤，避免污染对话历史。
 
-### History Consolidation
+### 历史记录合并
 
-When converting Codex conversation history with consecutive tool calls, the bridge:
+在转换 Codex 对话历史中的连续工具调用时，桥接器：
 
-1. Merges consecutive `function_call` / `local_shell_call` items into a single Anthropic assistant `tool_use` message.
-2. Merges consecutive tool outputs into a single user `tool_result` message.
-3. This prevents upstream providers from rejecting requests due to unmatched `tool_calls`/`tool_messages`.
+1. 将连续的 `function_call` / `local_shell_call` 条目合并为单条 Anthropic assistant `tool_use` 消息。
+2. 将连续的工具输出合并为单条 user `tool_result` 消息。
+3. 这防止上游提供商因不匹配的 `tool_calls`/`tool_messages` 而拒绝请求。
 
-## Prompt Caching
+## 提示缓存
 
-Prompt caching is a first-class concern in this bridge because OpenAI's caching is automatic while Anthropic's requires explicit `cache_control` markers. A naive field-by-field translation would silently break caching.
+提示缓存是本桥接器的一等关切，因为 OpenAI 的缓存是自动的，而 Anthropic 需要显式的 `cache_control` 标记。简单的逐字段翻译会悄无声息地破坏缓存。
 
-### Strategy Modes
+### 策略模式
 
-| Mode | Behavior | Use Case |
+| 模式 | 行为 | 使用场景 |
 | --- | --- | --- |
-| `off` | No `cache_control` injected. | Strict no-cache or provider doesn't support it. |
-| `automatic` | Top-level request `cache_control:{type:"ephemeral"}` added. | Multi-turn conversations where the cache breakpoint shifts with history. |
-| `explicit` | `cache_control` placed on the last stable tool, system block, or message content block. | Large system prompts, tool definitions, long documents, example sets. |
-| `hybrid` | Both top-level and block-level `cache_control`. | Simultaneously caching tools/system and growing conversation history. |
+| `off` | 不注入 `cache_control`。 | 严格禁用缓存，或提供商不支持。 |
+| `automatic` | 在请求顶层添加 `cache_control:{type:"ephemeral"}`。 | 多轮对话，缓存断点随历史移动。 |
+| `explicit` | 在最后一个稳定的工具、系统块或消息内容块上放置 `cache_control`。 | 大型系统提示、工具定义、长文档、示例集。 |
+| `hybrid` | 同时在顶层和块级别放置 `cache_control`。 | 同时缓存工具/系统和不断增长的对话历史。 |
 
-The config has two independent controls:
+配置中有两个独立控制项：
 
-- `automatic_prompt_cache`: controls top-level request `cache_control`.
-- `explicit_cache_breakpoints`: controls block-level breakpoints on tools/system/messages.
+- `automatic_prompt_cache`：控制顶层请求 `cache_control`。
+- `explicit_cache_breakpoints`：控制工具/系统/消息上的块级断点。
 
-When both are on with `mode: automatic`, the planner effectively produces a hybrid plan.
+当两者都开启且 `mode: automatic` 时，规划器实际上会生成 hybrid 计划。
 
-### Cache Creation Plan
+### 缓存创建计划
 
-Anthropic has no separate "create cache" API. Cache is created as part of a regular `messages.create` request when `cache_control` markers are present. The `CacheCreationPlanner` runs before every forwarded request.
+Anthropic 没有独立的"创建缓存" API。缓存是在带有 `cache_control` 标记的常规 `messages.create` 请求中创建的。`CacheCreationPlanner` 在每次转发请求前运行。
 
-**Planner Input:**
+**规划器输入：**
 
-- `model` (OpenAI alias and resolved provider model)
-- `prompt_cache_key` (bridge-local routing hint, never sent to provider)
-- `prompt_cache_retention` → mapped to TTL (`in_memory` → `5m`, `24h` → `1h` with downgrade opt-in)
-- Hashes of `tools`, `system`, `messages` (canonical JSON → SHA-256)
-- Estimated token count for threshold checks
-- Local cache registry state (warm / warming / expired / not_cacheable)
+- `model`（OpenAI 别名和解析后的提供商模型）
+- `prompt_cache_key`（桥接器本地路由提示，从不发送给提供商）
+- `prompt_cache_retention` → 映射为 TTL（`in_memory` → `5m`，`24h` → `1h`，需降级显式同意）
+- `tools`、`system`、`messages` 的哈希值（规范 JSON → SHA-256）
+- 用于阈值检查的预估 token 数
+- 本地缓存注册表状态（warm / warming / expired / not_cacheable）
 
-**Planner Output:**
+**规划器输出：**
 
 ```go
 type CacheCreationPlan struct {
     Mode        string            // off, automatic, explicit, hybrid
     TTL         string            // 5m, 1h
-    LocalKey    string            // SHA-256 of all stable fingerprint components
-    Breakpoints []CacheBreakpoint // scope: tools, system, messages
+    LocalKey    string            // 所有稳定指纹组件的 SHA-256
+    Breakpoints []CacheBreakpoint // 作用域：tools, system, messages
     WarmPolicy  string            // none, leader, background
     Reason      string
 }
 ```
 
-**Decision Flow:**
+**决策流程：**
 
-1. Provider capability check → skip if prompt caching is disabled.
-2. Stability check → exclude timestamps, request IDs, random values, latest user message from cache prefix.
-3. Token threshold check → skip if estimated tokens are below `min_cache_tokens`.
-4. Value check → skip if `estimated_tokens * expected_reuse` is below `minimum_value_score`.
-5. Registry check → if already warm, re-inject same breakpoints for read hit.
-6. Breakpoint selection → prefer `tools` → `system` → `messages` stable prefix, max 4 breakpoints.
+1. 提供商能力检查 → 如果提示缓存被禁用则跳过。
+2. 稳定性检查 → 从缓存前缀中排除时间戳、请求 ID、随机值、最新用户消息。
+3. Token 阈值检查 → 如果预估 token 低于 `min_cache_tokens` 则跳过。
+4. 价值检查 → 如果 `estimated_tokens * expected_reuse` 低于 `minimum_value_score` 则跳过。
+5. 注册表检查 → 如果已经是 warm，重新注入相同断点以获得读取命中。
+6. 断点选择 → 优先 `tools` → `system` → `messages` 稳定前缀，最多 4 个断点。
 
-**Breakpoint Placement:**
+**断点放置：**
 
-| Prefix Pattern | Breakpoint Position | Notes |
+| 前缀模式 | 断点位置 | 说明 |
 | --- | --- | --- |
-| Large tool set + short system | Last tool definition | Stable across sessions |
-| Long system prompt | Last system text block | `system` must be block array |
-| Long document as first user message | Last text/image block in first user message | Follow-up questions after breakpoint |
-| Multi-turn session | Last stable history message | Latest user question excluded |
-| Post-tool-call continuation | After last stable `tool_result` | Tool results vary per call |
+| 大型工具集 + 短系统提示 | 最后一个工具定义 | 跨会话稳定 |
+| 长系统提示 | 最后一个系统文本块 | `system` 必须是块数组 |
+| 长文档作为首条用户消息 | 首条用户消息中最后一个文本/图片块 | 断点后是后续问题 |
+| 多轮会话 | 最后一条稳定历史消息 | 最新用户问题被排除 |
+| 工具调用后延续 | 最后一条稳定 `tool_result` 之后 | 工具结果每次调用不同 |
 
-**Injection Algorithm:**
+**注入算法：**
 
-1. Build Anthropic request without cache fields.
-2. Canonical JSON-encode and hash `tools`, `system`, `messages`.
-3. Run `CacheCreationPlanner` to get `CacheCreationPlan`.
-4. For `automatic`/`hybrid`: set `request.CacheControl = {type:"ephemeral", ttl:"1h"}`.
-5. For `explicit`/`hybrid`: set `block.CacheControl` on selected tool/system/message blocks.
-6. Re-encode request and log `request_fingerprint` for hit-rate analysis.
+1. 构建不带缓存字段的 Anthropic 请求。
+2. 对 `tools`、`system`、`messages` 进行规范 JSON 编码并计算哈希。
+3. 运行 `CacheCreationPlanner` 获取 `CacheCreationPlan`。
+4. 对于 `automatic`/`hybrid`：设置 `request.CacheControl = {type:"ephemeral", ttl:"1h"}`。
+5. 对于 `explicit`/`hybrid`：在选定的工具/系统/消息块上设置 `block.CacheControl`。
+6. 重新编码请求并记录 `request_fingerprint` 用于命中率分析。
 
-### Usage Normalization
+### 用量标准化
 
-When caching is active, Anthropic's `usage.input_tokens` only represents fresh input after the last cache breakpoint. The bridge normalizes to OpenAI expectations:
+缓存激活时，Anthropic 的 `usage.input_tokens` 仅代表最后一个缓存断点之后的新输入。桥接器将其标准化为 OpenAI 的预期格式：
 
 ```text
 openai.usage.input_tokens =
@@ -193,105 +193,105 @@ openai.usage.input_tokens_details.cached_tokens =
   anthropic.usage.cache_read_input_tokens
 ```
 
-Provider-level breakdowns (`cache_creation_input_tokens`, `cache_creation.ephemeral_*`) are preserved in `response.metadata.provider_usage` for cost analysis. Note that `cached_tokens` is always serialized, even when zero, to avoid Codex parsing errors.
+提供商级别的明细（`cache_creation_input_tokens`、`cache_creation.ephemeral_*`）保留在 `response.metadata.provider_usage` 中供成本分析。注意 `cached_tokens` 始终序列化，即使为零，以避免 Codex 解析错误。
 
-### Concurrency & Warming
+### 并发与预热
 
-- **Singleflight**: Only one "leader" request writes cache for a given `local_cache_key`; followers either wait for the first upstream response event or forward directly.
-- **Background warm**: Optional; sends a minimal request (e.g., "reply OK only") with cache markers to pre-warm. This still consumes tokens.
-- **Registry**: In-memory, recording `local_cache_key`, breakpoint hashes, TTL, timestamps, and recent usage signals. No prompt text is stored.
+- **Singleflight**：对于给定的 `local_cache_key`，只有一个"leader"请求写入缓存；跟随者要么等待第一个上游响应事件，要么直接转发。
+- **后台预热**：可选；发送一个最小请求（例如"只回复 OK"）并带上缓存标记来预预热。这仍然会消耗 token。
+- **注册表**：内存中，记录 `local_cache_key`、断点哈希、TTL、时间戳和近期用量信号。不存储提示文本。
 
-### Result Determination
+### 结果判定
 
-Cache effectiveness is determined from Anthropic usage signals, not from the presence of `cache_control` in the request:
+缓存效果由 Anthropic 用量信号决定，而不是由请求中是否存在 `cache_control` 决定：
 
-| Usage Signal | Cache Registry Update |
+| 用量信号 | 缓存注册表更新 |
 | --- | --- |
-| `cache_creation_input_tokens > 0` | `warm` — write succeeded, update expires_at |
-| `cache_read_input_tokens > 0` | `warm` — read hit, accumulate hit rate |
-| Both 0, low `input_tokens` | `not_cacheable` — likely below threshold |
-| Both 0, sufficient tokens | `missed` — prefix instability suspected |
-| Provider cache parameter error | `failed` — retry without cache fields |
+| `cache_creation_input_tokens > 0` | `warm` — 写入成功，更新 expires_at |
+| `cache_read_input_tokens > 0` | `warm` — 读取命中，累积命中率 |
+| 两者都为 0，且 `input_tokens` 较低 | `not_cacheable` — 可能低于阈值 |
+| 两者都为 0，且 token 充足 | `missed` — 怀疑前缀不稳定 |
+| 提供商缓存参数错误 | `failed` — 不带缓存字段重试 |
 
-## Tool Call Mapping
+## 工具调用映射
 
-| OpenAI | Anthropic | Notes |
+| OpenAI | Anthropic | 说明 |
 | --- | --- | --- |
-| `{type:"function", name, description, parameters}` | `{name, description, input_schema}` | `parameters` must be a JSON Schema object. |
-| `{type:"local_shell"}` | `{name:"local_shell", ...}` | Codex `local_shell_call` ↔ `tool_use`. Command, working_directory, timeout_ms, env. |
-| `{type:"custom"}` with grammar | Structured JSON schema per grammar kind | `apply_patch` → operations array; `exec` → source string. |
-| `namespace` | Flattened `namespace__tool` | Child functions/customs expanded with namespace prefix. |
-| `web_search_preview` | `{type:"web_search_20250305"}` | Max uses from config. |
-| `file_search`, `computer_use_preview`, `image_generation` | Skipped | Silently ignored in tool declarations. |
+| `{type:"function", name, description, parameters}` | `{name, description, input_schema}` | `parameters` 必须是 JSON Schema 对象。 |
+| `{type:"local_shell"}` | `{name:"local_shell", ...}` | Codex `local_shell_call` ↔ `tool_use`。包含 command、working_directory、timeout_ms、env。 |
+| `{type:"custom"}` 带 grammar | 按 grammar 类型划分的结构化 JSON schema | `apply_patch` → operations 数组；`exec` → source 字符串。 |
+| `namespace` | 展平为 `namespace__tool` | 子 function/custom 带命名空间前缀展开。 |
+| `web_search_preview` | `{type:"web_search_20250305"}` | 最大使用次数来自配置。 |
+| `file_search`、`computer_use_preview`、`image_generation` | 跳过 | 在工具声明中静默忽略。 |
 
-### Response Side
+### 响应侧
 
-Anthropic `tool_use` → OpenAI response items:
+Anthropic `tool_use` → OpenAI 响应条目：
 
 | Anthropic | OpenAI |
 | --- | --- |
-| `text` block | `output[].type="message"` with `output_text` content parts |
-| `tool_use` (function) | `output[].type="function_call"` with `call_id`, `name`, `arguments`, `status` |
-| `tool_use` (local_shell) | `output[].type="local_shell_call"` with structured `action` |
-| `tool_use` (custom) | `output[].type="custom_tool_call"` with grammar-reconstructed `input` |
-| `server_tool_use:web_search` | `output[].type="web_search_call"` with `action` (filtered if empty) |
+| `text` 块 | `output[].type="message"`，带 `output_text` 内容部分 |
+| `tool_use`（function） | `output[].type="function_call"`，带 `call_id`、`name`、`arguments`、`status` |
+| `tool_use`（local_shell） | `output[].type="local_shell_call"`，带结构化 `action` |
+| `tool_use`（custom） | `output[].type="custom_tool_call"`，带 grammar 重建的 `input` |
+| `server_tool_use:web_search` | `output[].type="web_search_call"`，带 `action`（空时过滤） |
 
-### Next Turn
+### 下一轮
 
-OpenAI `function_call_output` items → Anthropic `tool_result` blocks in a `role=user` message.
+OpenAI `function_call_output` 条目 → Anthropic `role=user` 消息中的 `tool_result` 块。
 
-## Streaming
+## 流式传输
 
-Anthropic SSE events are converted to OpenAI Responses SSE via a state machine that tracks content index, output index, item IDs, and sequence numbers.
+Anthropic SSE 事件通过状态机转换为 OpenAI Responses SSE，状态机跟踪内容索引、输出索引、条目 ID 和序列号。
 
-| Anthropic Event | OpenAI Responses SSE Events |
+| Anthropic 事件 | OpenAI Responses SSE 事件 |
 | --- | --- |
 | `message_start` | `response.created` → `response.in_progress` |
-| `content_block_start` (text) | `response.output_item.added` (message) → `response.content_part.added` (output_text) |
-| `content_block_delta` (text_delta) | `response.output_text.delta` |
-| `content_block_stop` (text) | `response.output_text.done` → `response.content_part.done` → `response.output_item.done` |
-| `content_block_start` (tool_use) | `response.output_item.added` (function_call / local_shell_call / custom_tool_call) |
-| `content_block_delta` (input_json_delta) | `response.function_call_arguments.delta` | `response.custom_tool_call_input.delta` (custom tools) | web search JSON accumulated internally |
-| `content_block_stop` (tool_use) | `response.function_call_arguments.done` → `response.output_item.done` |
-| `message_delta` | Updates aggregated response usage and status |
-| `message_stop` | `response.completed` or `response.incomplete` |
+| `content_block_start`（text） | `response.output_item.added`（message）→ `response.content_part.added`（output_text） |
+| `content_block_delta`（text_delta） | `response.output_text.delta` |
+| `content_block_stop`（text） | `response.output_text.done` → `response.content_part.done` → `response.output_item.done` |
+| `content_block_start`（tool_use） | `response.output_item.added`（function_call / local_shell_call / custom_tool_call） |
+| `content_block_delta`（input_json_delta） | `response.function_call_arguments.delta` / `response.custom_tool_call_input.delta`（自定义工具）/ web search JSON 内部累积 |
+| `content_block_stop`（tool_use） | `response.function_call_arguments.done` → `response.output_item.done` |
+| `message_delta` | 更新聚合响应用量和状态 |
+| `message_stop` | `response.completed` 或 `response.incomplete` |
 | `error` | `response.failed` |
-| `ping` | Ignored or forwarded as comment frame |
+| `ping` | 忽略或作为注释帧转发 |
 
-SSE invariants:
+SSE 不变量：
 
-- Every event carries a monotonically increasing `sequence_number`.
-- Text delta events include `item_id`, `output_index`, and `content_index`.
-- Final usage is not emitted until `message_stop`.
-- Web search and custom tool streaming events for `input_json_delta` are accumulated internally and emitted at `content_block_stop`.
-- Provider connection failure produces `response.failed` and closes the SSE connection.
+- 每个事件携带单调递增的 `sequence_number`。
+- 文本增量事件包含 `item_id`、`output_index` 和 `content_index`。
+- 最终用量直到 `message_stop` 才发出。
+- Web search 和自定义工具的 `input_json_delta` 流式事件在内部累积，在 `content_block_stop` 时发出。
+- 提供商连接失败产生 `response.failed` 并关闭 SSE 连接。
 
-## Stop Reason Mapping
+## 停止原因映射
 
-| Anthropic | OpenAI Status | Incomplete Details |
+| Anthropic | OpenAI 状态 | 不完整详情 |
 | --- | --- | --- |
 | `end_turn` | `completed` | — |
 | `tool_use` | `completed` | — |
 | `stop_sequence` | `completed` | — |
 | `max_tokens` | `incomplete` | `{reason:"max_output_tokens"}` |
 | `model_context_window` | `incomplete` | `{reason:"max_input_tokens"}` |
-| `refusal` | `completed` | — (`refusal` content part emitted) |
+| `refusal` | `completed` | —（发出 `refusal` 内容部分） |
 | `pause_turn` | `incomplete` | `{reason:"provider_pause"}` |
 
-## Error Mapping
+## 错误映射
 
-| Scenario | HTTP Status | OpenAI Error Code |
+| 场景 | HTTP 状态码 | OpenAI 错误码 |
 | --- | --- | --- |
-| Auth failure | 401 | `invalid_api_key` |
-| Permission / model unavailable | 403 | `model_not_found` / `permission_denied` |
-| Unsupported field | 400 | `unsupported_parameter` |
-| Invalid JSON schema | 400 | `invalid_request_error` |
-| Context exceeded | 400 / 413 | `context_length_exceeded` |
-| Provider rate limit | 429 | `rate_limit_exceeded` |
-| Provider 5xx | 502 | `provider_error` |
-| Provider timeout | 504 | `provider_timeout` |
+| 认证失败 | 401 | `invalid_api_key` |
+| 权限 / 模型不可用 | 403 | `model_not_found` / `permission_denied` |
+| 不支持的字段 | 400 | `unsupported_parameter` |
+| 无效的 JSON schema | 400 | `invalid_request_error` |
+| 上下文超限 | 400 / 413 | `context_length_exceeded` |
+| 提供商限流 | 429 | `rate_limit_exceeded` |
+| 提供商 5xx | 502 | `provider_error` |
+| 提供商超时 | 504 | `provider_timeout` |
 
-Error responses use the standard OpenAI format:
+错误响应使用标准 OpenAI 格式：
 
 ```json
 {
@@ -304,27 +304,27 @@ Error responses use the standard OpenAI format:
 }
 ```
 
-## Operational Notes
+## 运维说明
 
-### Trace Recording
+### 追踪记录
 
-When `trace_requests: true`, the bridge dumps request/response pairs to the local filesystem for debugging. Traces are organized by mode and session:
+当 `trace_requests: true` 时，桥接器将请求/响应对转储到本地文件系统用于调试。追踪按模式和会话组织：
 
-- `Transform`: `trace/Transform/{session_id}/Response/{n}.json` + `Anthropic/{n}.json`
-- `Capture`: `trace/Capture/{Response|Anthropic}/{session_id}/{n}.json`
+- `Transform`：`trace/Transform/{session_id}/Response/{n}.json` + `Anthropic/{n}.json`
+- `Capture`：`trace/Capture/{Response|Anthropic}/{session_id}/{n}.json`
 
-API keys are redacted. Trace paths are in `.gitignore`.
+API 密钥已脱敏。追踪路径在 `.gitignore` 中。
 
-### Proxy Modes
+### 代理模式
 
-The two capture modes run a transparent HTTP proxy that forwards requests to the upstream provider without protocol conversion:
+两种捕获模式运行透明 HTTP 代理，将请求转发给上游提供商而不做协议转换：
 
-- **CaptureResponse**: Records OpenAI Responses API native traffic. Auth is overridden by proxy config but `User-Agent` passes through.
-- **CaptureAnthropic**: Records Anthropic Messages API native traffic. Useful for capturing Claude Code's actual request patterns to inform Transform mode defaults.
+- **CaptureResponse**：记录原生 OpenAI Responses API 流量。认证由代理配置覆盖，但 `User-Agent` 透传。
+- **CaptureAnthropic**：记录原生 Anthropic Messages API 流量。用于捕获 Claude Code 的实际请求模式，以指导 Transform 模式的默认值。
 
-### Capability Profile
+### 能力画像
 
-Provider capabilities are declared in `config.yml`:
+提供商能力在 `config.yml` 中声明：
 
 ```yaml
 cache:
@@ -337,43 +337,43 @@ cache:
   max_breakpoints: 4
 ```
 
-All unsupported-but-requested capabilities produce explicit errors — no silent degradation.
+所有不支持但被请求的能力都会产生显式错误 —— 不做静默降级。
 
-### Security
+### 安全
 
-- Provider API keys are never exposed to the client; client and upstream keys are configured separately.
-- Logs redact `Authorization` headers, tool argument key-like fields, and image/file base64 content.
-- Request/response traces include trace IDs but not full prompts (unless audit mode is on).
-- `.gitignore` covers `config.yml`, `config.yaml`, `helloagents/`, `.codex`, `.claude`, `AGENTS.md`, `CLAUDE.md`, `trace/`, and `FakeHome/`.
+- 提供商 API 密钥从不暴露给客户端；客户端和上游密钥分开配置。
+- 日志对 `Authorization` 头、工具参数中的类键字段、以及图片/文件 base64 内容进行脱敏。
+- 请求/响应追踪包含追踪 ID 但不包含完整提示（除非审计模式开启）。
+- `.gitignore` 覆盖 `config.yml`、`config.yaml`、`helloagents/`、`.codex`、`.claude`、`AGENTS.md`、`CLAUDE.md`、`trace/` 和 `FakeHome/`。
 
-## Implementation Status
+## 实现状态
 
-- DTO definitions for OpenAI Responses and Anthropic Messages (request, response, streaming events, errors)
-- Non-streaming text request/response conversion
-- Streaming conversion with SSE state machine (text, tool_use delta, lifecycle events)
-- Function tool schema mapping and tool call bridging
-- Codex-specific tool support: `local_shell`, `custom` (apply_patch, exec), `namespace`, `web_search`
-- Codex conversation history consolidation (consecutive tool calls → merged Anhtropic rounds)
-- Prompt cache planner with automatic/explicit/hybrid breakpoint strategies
-- `cache_control` injection and usage normalization
-- Cache registry (in-memory) with state tracking and concurrency leader/follower pattern
-- Error mapping (OpenAI-style errors from provider errors)
-- Trace recording (per-mode, per-session, per-request-number)
-- Transparent proxy modes (CaptureResponse, CaptureAnthropic)
-- Config schema validation
-- Real provider end-to-end tests
+- OpenAI Responses 和 Anthropic Messages 的 DTO 定义（请求、响应、流式事件、错误）
+- 非流式文本请求/响应转换
+- 带 SSE 状态机的流式转换（文本、tool_use 增量、生命周期事件）
+- Function 工具 schema 映射和工具调用桥接
+- Codex 专属工具支持：`local_shell`、`custom`（apply_patch、exec）、`namespace`、`web_search`
+- Codex 对话历史合并（连续工具调用 → 合并的 Anthropic 轮次）
+- 带 automatic/explicit/hybrid 断点策略的提示缓存规划器
+- `cache_control` 注入和用量标准化
+- 缓存注册表（内存中），带状态跟踪和并发 leader/follower 模式
+- 错误映射（从提供商错误生成 OpenAI 风格错误）
+- 追踪记录（按模式、按会话、按请求编号）
+- 透明代理模式（CaptureResponse、CaptureAnthropic）
+- 配置 schema 校验
+- 真实提供商端到端测试
 
-### Known Gaps
+### 已知缺口
 
-- No OpenAI built-in tools (`web_search`, `file_search`, `computer_use`, `code_interpreter` — only `web_search` is bridged to Anthropic server tools)
-- No file ID resolution or background response support
-- No `previous_response_id` / `response.store` persistence
-- No real token counter; cache thresholds use rough estimation (`len(json)/4`)
-- Cache registry is in-memory only; no persistence across restarts
-- No background cache warming worker
-- 24h retention not supported by default; requires `allow_retention_downgrade` opt-in
+- 不支持 OpenAI 内置工具（`web_search`、`file_search`、`computer_use`、`code_interpreter` —— 只有 `web_search` 被桥接到 Anthropic 服务端工具）
+- 不支持文件 ID 解析或后台响应
+- 不支持 `previous_response_id` / `response.store` 持久化
+- 没有真实 token 计数器；缓存阈值使用粗略估算（`len(json)/4`）
+- 缓存注册表仅在内存中；重启后不保留
+- 没有后台缓存预热工作线程
+- 默认不支持 24h 保留；需要 `allow_retention_downgrade` 显式同意
 
-## References
+## 参考
 
 - [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)
 - [Anthropic Tool Use](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview)
