@@ -570,6 +570,62 @@ func TestDeepSeekThinkingIsStatefullyInjectedOnlyForToolCalls(t *testing.T) {
 	}
 }
 
+func TestDeepSeekSignatureOnlyThinkingIsReinjectedForToolCalls(t *testing.T) {
+	bridgeUnderTest := testBridgeWithConfig(config.Config{
+		DeepSeekV4:       true,
+		DefaultMaxTokens: 1024,
+		ModelMap:         map[string]string{"gpt-test": "deepseek-v4-pro"},
+		Cache: config.CacheConfig{
+			Mode:          "off",
+			PromptCaching: true,
+		},
+	})
+	events := []anthropic.StreamEvent{
+		{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant"}},
+		{Type: "content_block_start", Index: 0, ContentBlock: &anthropic.ContentBlock{Type: "thinking"}},
+		{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "signature_delta", Signature: "sig_only"}},
+		{Type: "content_block_stop", Index: 0},
+		{Type: "content_block_start", Index: 1, ContentBlock: &anthropic.ContentBlock{Type: "tool_use", ID: "call_ls", Name: "exec_command", Input: json.RawMessage(`{}`)}},
+		{Type: "content_block_delta", Index: 1, Delta: anthropic.StreamDelta{Type: "input_json_delta", PartialJSON: `{"cmd":"ls"}`}},
+		{Type: "content_block_stop", Index: 1},
+		{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "tool_use"}},
+		{Type: "message_stop"},
+	}
+
+	convertedEvents := bridgeUnderTest.ConvertStreamEvents(events, "gpt-test")
+	completed := streamLifecycleResponse(t, convertedEvents, "response.completed")
+	if len(completed.Output) != 1 || completed.Output[0].Type != "function_call" {
+		t.Fatalf("completed output = %+v", completed.Output)
+	}
+
+	followup := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`[
+			{"role":"user","content":[{"type":"input_text","text":"inspect"}],"type":"message"},
+			{"arguments":"{\"cmd\":\"ls\"}","call_id":"call_ls","name":"exec_command","type":"function_call"},
+			{"call_id":"call_ls","output":"README.md\n","type":"function_call_output"}
+		]`),
+	}
+	converted, _, err := bridgeUnderTest.ToAnthropic(followup)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	assistant := converted.Messages[1]
+	if len(assistant.Content) != 2 {
+		t.Fatalf("assistant content = %+v", assistant.Content)
+	}
+	if assistant.Content[0].Type != "thinking" || assistant.Content[0].Thinking != "" || assistant.Content[0].Signature != "sig_only" {
+		t.Fatalf("thinking block = %+v", assistant.Content[0])
+	}
+	data, err := json.Marshal(assistant.Content[0])
+	if err != nil {
+		t.Fatalf("Marshal thinking block error = %v", err)
+	}
+	if !strings.Contains(string(data), `"thinking":""`) {
+		t.Fatalf("thinking block JSON should keep empty thinking field: %s", data)
+	}
+}
+
 func TestDeepSeekThinkingIsInjectedForToolChainFinalAssistantText(t *testing.T) {
 	bridgeUnderTest := testBridgeWithConfig(config.Config{
 		DeepSeekV4:       true,

@@ -95,7 +95,11 @@ internal/e2e           真实提供商端到端测试
 
 ### Web Search 桥接
 
+
 OpenAI `web_search`/`web_search_preview` 工具会在 Provider 支持时转换为 Anthropic `web_search_20250305` 服务端工具。`provider.web_search.support:auto` 会在 Transform 启动时用默认模型做一次流式轻量探测；只有探测证明可用才注入，否则本轮进程保守禁用搜索工具注入。也可以用 `enabled` 强制注入，或用 `disabled` 完全关闭。在响应侧，`server_tool_use:web_search` 被映射回 Codex `web_search_call` 输出条目。空搜索结果和前导消息（`Search results for query:`）会被过滤，避免污染对话历史。
+### Injected Web Search
+
+`injected` 模式：桥接器不依赖 Provider 的服务端搜索工具，改为向模型注入 `tavily_search`（function-type 工具）和可选的 `firecrawl_fetch` 两个函数工具。模型调用这些工具时，websearch orchestrator 拦截调用、通过 Tavily / Firecrawl API 执行搜索、将结果回传给模型继续推理，最后的响应中搜索过程对 Codex 完全透明。需要配置 `tavily_api_key`；`firecrawl_api_key` 可选（不配则不注入 `firecrawl_fetch`）。
 
 ### 历史记录合并
 

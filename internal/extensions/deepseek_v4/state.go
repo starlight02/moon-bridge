@@ -41,7 +41,7 @@ func NewStreamState() *StreamState {
 }
 
 func (state *State) RememberForToolCalls(toolCallIDs []string, block anthropic.ContentBlock) {
-	if state == nil || block.Thinking == "" || len(toolCallIDs) == 0 {
+	if state == nil || !hasThinkingPayload(block) || len(toolCallIDs) == 0 {
 		return
 	}
 	block = normalizeThinkingBlock(block)
@@ -60,7 +60,7 @@ func (state *State) RememberForToolCalls(toolCallIDs []string, block anthropic.C
 }
 
 func (state *State) RememberForAssistantText(text string, block anthropic.ContentBlock) {
-	if state == nil || text == "" || block.Thinking == "" {
+	if state == nil || text == "" || !hasThinkingPayload(block) {
 		return
 	}
 	key := thinkingTextKey(text)
@@ -94,7 +94,7 @@ func (state *State) RememberFromContent(blocks []anthropic.ContentBlock) {
 }
 
 func (state *State) RememberStreamResult(stream *StreamState, outputText string) {
-	if state == nil || stream == nil || stream.completedThinking.Thinking == "" {
+	if state == nil || stream == nil || !hasThinkingPayload(stream.completedThinking) {
 		return
 	}
 	if len(stream.toolCallIDs) > 0 {
@@ -215,11 +215,15 @@ func (state *State) pruneLocked() {
 
 func HasThinkingBlock(blocks []anthropic.ContentBlock) bool {
 	for _, block := range blocks {
-		if block.Type == "thinking" && block.Thinking != "" {
+		if hasThinkingPayload(block) {
 			return true
 		}
 	}
 	return false
+}
+
+func hasThinkingPayload(block anthropic.ContentBlock) bool {
+	return block.Type == "thinking" && (block.Thinking != "" || block.Signature != "")
 }
 
 func normalizeThinkingBlock(block anthropic.ContentBlock) anthropic.ContentBlock {

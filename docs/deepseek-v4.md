@@ -55,7 +55,7 @@ DeepSeek 返回的 `thinking` 或 `reasoning_content` 块会被提取并转为 O
 
 ### 5. 流式处理
 
-流式模式下，扩展通过 `StreamState` 逐事件收集 `thinking_delta` / `reasoning_content_delta` / `signature_delta`，在 thinking block 结束时将其汇入 `State` 供下一轮使用。
+流式模式下，扩展通过 `StreamState` 逐事件收集 `thinking_delta` / `reasoning_content_delta` / `signature_delta`，在 thinking block 结束时将其汇入 `State` 供下一轮使用。若上游只返回 `signature_delta` 而没有 thinking 文本，扩展也会缓存并回放一个空文本的 `thinking` block，避免下一轮 thinking mode 请求因缺少 `content[].thinking` 被拒绝。
 
 ## 模块结构
 

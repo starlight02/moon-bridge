@@ -70,6 +70,7 @@ provider:
 - `auto`：启动 Transform 时用默认模型发送一次流式轻量探测；只有探测证明可用才注入，否则保守禁用
 - `enabled`：跳过探测，始终注入 Anthropic `web_search_20250305`
 - `disabled`：不注入搜索工具，Codex 仍可继续使用其他工具
+- `injected`：不依赖上游 Provider 是否支持 Anthropic 服务端搜索。桥接器改为向模型注入 `tavily_search` / `firecrawl_fetch` 两个 function-type 工具，并在 Transform 内部通过 Tavily / Firecrawl API 执行搜索。需配置 `tavily_api_key`；`firecrawl_api_key` 可选，不配则不注入 fetch 工具
 
 ### DeepSeek V4 扩展
 

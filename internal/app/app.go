@@ -11,6 +11,7 @@ import (
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/cache"
+	"moonbridge/internal/extensions/websearchinjected"
 	"moonbridge/internal/config"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/proxy"
@@ -67,9 +68,15 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 		Root:    transformTraceRoot(),
 	})
 	logTrace(errors, "transform", tracer)
+	// Wrap provider with injected search orchestrator extension when configured.
+	var provider server.Provider = anthropicClientWrapper{client: anthropicClient}
+	if websearchinjected.IsEnabled(cfg) {
+		provider = websearchinjected.WrapProvider(anthropicClient, cfg.TavilyAPIKey, cfg.FirecrawlAPIKey, cfg.SearchMaxRounds)
+		logger.Info("injected web search enabled", "tavily", cfg.TavilyAPIKey != "", "firecrawl", cfg.FirecrawlAPIKey != "")
+	}
 	handler := server.New(server.Config{
 		Bridge:      bridge.New(cfg, cache.NewMemoryRegistry()),
-		Provider:    anthropicClientWrapper{client: anthropicClient},
+		Provider:    provider,
 		Tracer:      tracer,
 		TraceErrors: errors,
 		Stats:       sessionStats,
@@ -90,6 +97,9 @@ func resolveWebSearchSupport(ctx context.Context, cfg config.Config, prober webS
 		return cfg
 	case config.WebSearchSupportEnabled:
 		logger.Info("web_search forced enabled by config")
+		return cfg
+	case config.WebSearchSupportInjected:
+		logger.Info("web_search injected mode enabled, search executed server-side via Tavily/Firecrawl")
 		return cfg
 	}
 

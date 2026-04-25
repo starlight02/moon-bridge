@@ -57,8 +57,11 @@ type ProviderModelFileConfig struct {
 }
 
 type WebSearchFileConfig struct {
-	Support string `yaml:"support"`
-	MaxUses int    `yaml:"max_uses"`
+	Support         string `yaml:"support"`
+	MaxUses         int    `yaml:"max_uses"`
+	TavilyAPIKey    string `yaml:"tavily_api_key"`
+	FirecrawlAPIKey string `yaml:"firecrawl_api_key"`
+	SearchMaxRounds int    `yaml:"search_max_rounds"`
 }
 
 type DeveloperFileConfig struct {
@@ -136,6 +139,9 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 		ProviderUserAgent: strings.TrimSpace(fileConfig.Provider.UserAgent),
 		WebSearchSupport:  webSearchSupport,
 		WebSearchMaxUses:  intOrDefault(fileConfig.Provider.WebSearch.MaxUses, 8),
+		TavilyAPIKey:      strings.TrimSpace(fileConfig.Provider.WebSearch.TavilyAPIKey),
+		FirecrawlAPIKey:   strings.TrimSpace(fileConfig.Provider.WebSearch.FirecrawlAPIKey),
+		SearchMaxRounds:   intOrDefault(fileConfig.Provider.WebSearch.SearchMaxRounds, 5),
 		DefaultMaxTokens:  intOrDefault(fileConfig.Provider.DefaultMaxTokens, 1024),
 		ModelMap:          providerModelMap(providerModels),
 		ProviderModels:    providerModels,
@@ -166,7 +172,7 @@ func parseWebSearchSupport(value string) (WebSearchSupport, error) {
 	switch support := WebSearchSupport(strings.TrimSpace(value)); support {
 	case "":
 		return WebSearchSupportAuto, nil
-	case WebSearchSupportAuto, WebSearchSupportEnabled, WebSearchSupportDisabled:
+	case WebSearchSupportAuto, WebSearchSupportEnabled, WebSearchSupportDisabled, WebSearchSupportInjected:
 		return support, nil
 	default:
 		return "", fmt.Errorf("invalid provider.web_search.support %q", value)

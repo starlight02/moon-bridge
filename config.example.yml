@@ -19,8 +19,14 @@ provider:
   version: "2023-06-01"
   user_agent: "claude-cli/2.1.112 (external, cli)"
   web_search:
-    support: "disabled" # auto / enabled / disabled
+    support: "disabled" # auto / enabled / disabled / injected
+    # injected: bridge injects tavily_search/firecrawl_fetch as function tools
+    # and executes them server-side via Tavily/Firecrawl APIs. Requires tavily_api_key.
+    # Useful when the upstream Anthropic provider does not support web_search_20250305.
     max_uses: 8
+    tavily_api_key: "replace-with-tavily-api-key"
+    firecrawl_api_key: "replace-with-firecrawl-api-key"
+    search_max_rounds: 5
   default_max_tokens: 65536
   default_model: "moonbridge"
   deepseek_v4: true  # Enable DeepSeek thinking_mode extension for Codex/OpenAI reasoning requests.

@@ -42,6 +42,25 @@ type ContentBlock struct {
 	CacheControl *CacheControl   `json:"cache_control,omitempty"`
 }
 
+func (block ContentBlock) MarshalJSON() ([]byte, error) {
+	type contentBlock ContentBlock
+	if block.Type != "thinking" || block.Thinking != "" {
+		return json.Marshal(contentBlock(block))
+	}
+	type thinkingBlock struct {
+		Type         string        `json:"type"`
+		Thinking     string        `json:"thinking"`
+		Signature    string        `json:"signature,omitempty"`
+		CacheControl *CacheControl `json:"cache_control,omitempty"`
+	}
+	return json.Marshal(thinkingBlock{
+		Type:         block.Type,
+		Thinking:     block.Thinking,
+		Signature:    block.Signature,
+		CacheControl: block.CacheControl,
+	})
+}
+
 type Tool struct {
 	Name         string         `json:"name"`
 	Type         string         `json:"type,omitempty"`

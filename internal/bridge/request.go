@@ -9,6 +9,7 @@ import (
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/cache"
 	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
+	"moonbridge/internal/extensions/websearchinjected"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/openai"
 )
@@ -151,6 +152,10 @@ func (bridge *Bridge) convertTools(tools []openai.Tool) ([]anthropic.Tool, error
 				}
 			}
 		case "web_search", "web_search_preview":
+			if bridge.cfg.WebSearchInjected() {
+				converted = append(converted, websearchinjected.InjectTools(bridge.cfg.FirecrawlAPIKey)...)
+				continue
+			}
 			if !bridge.cfg.WebSearchEnabled() {
 				log := logger.L().With("tool_type", tool.Type)
 				log.Debug("skipping web_search tool because provider support is disabled")

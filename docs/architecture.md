@@ -89,6 +89,8 @@ flowchart LR
 
 Transform 模式下，如果 `provider.web_search.support: auto`，启动时会用默认模型发送一次流式轻量 `web_search_20250305` 工具声明探测；只有探测证明可用才注入，否则进程内保守禁用 Codex `web_search` 工具注入。
 
+`provider.web_search.support: injected` 模式：不依赖 Provider 服务端搜索工具。桥接器将 `web_search_preview` 转为向模型注入 `tavily_search` / `firecrawl_fetch` 两个 function-type 工具，并在 Transform 启动时创建 websearch injected orchestrator 包裹底层 Provider 客户端。模型调用这些工具时，orchestrator 通过 Tavily / Firecrawl API 执行搜索并回传结果，搜索过程对 Codex 透明。
+
 ### internal/server
 
 HTTP 服务器层。提供 `/v1/responses` 和 `/responses` 两个 POST 端点。

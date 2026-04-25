@@ -25,6 +25,7 @@ const (
 	WebSearchSupportAuto     WebSearchSupport = "auto"
 	WebSearchSupportEnabled  WebSearchSupport = "enabled"
 	WebSearchSupportDisabled WebSearchSupport = "disabled"
+	WebSearchSupportInjected WebSearchSupport = "injected"
 )
 
 type Config struct {
@@ -41,6 +42,9 @@ type Config struct {
 	ProviderUserAgent string
 	WebSearchSupport  WebSearchSupport
 	WebSearchMaxUses  int
+	TavilyAPIKey      string
+	FirecrawlAPIKey   string
+	SearchMaxRounds   int
 	DefaultMaxTokens  int
 	ModelMap          map[string]string
 	ProviderModels    map[string]ProviderModelConfig
@@ -113,6 +117,14 @@ func (cfg Config) validateTransform() error {
 			return errors.New("provider.models cannot contain empty aliases or models")
 		}
 	}
+	if cfg.WebSearchSupport == WebSearchSupportInjected {
+		if cfg.TavilyAPIKey == "" {
+			return errors.New("provider.tavily_api_key is required when web_search.support is 'injected'")
+		}
+		if cfg.SearchMaxRounds <= 0 {
+			return errors.New("provider.search_max_rounds must be > 0 when web_search.support is 'injected'")
+		}
+	}
 	return nil
 }
 
@@ -177,6 +189,10 @@ func (cfg Config) CodexModel() string {
 
 func (cfg Config) WebSearchEnabled() bool {
 	return cfg.WebSearchSupport != WebSearchSupportDisabled
+}
+
+func (cfg Config) WebSearchInjected() bool {
+	return cfg.WebSearchSupport == WebSearchSupportInjected
 }
 
 func (cfg Config) WebSearchProbeModel() string {
