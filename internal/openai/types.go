@@ -1,0 +1,139 @@
+package openai
+
+import "encoding/json"
+
+type ResponsesRequest struct {
+	Model                string          `json:"model"`
+	Input                json.RawMessage `json:"input,omitempty"`
+	Instructions         string          `json:"instructions,omitempty"`
+	MaxOutputTokens      int             `json:"max_output_tokens,omitempty"`
+	Temperature          *float64        `json:"temperature,omitempty"`
+	TopP                 *float64        `json:"top_p,omitempty"`
+	Stop                 json.RawMessage `json:"stop,omitempty"`
+	Tools                []Tool          `json:"tools,omitempty"`
+	ToolChoice           json.RawMessage `json:"tool_choice,omitempty"`
+	Stream               bool            `json:"stream,omitempty"`
+	Metadata             map[string]any  `json:"metadata,omitempty"`
+	User                 string          `json:"user,omitempty"`
+	PromptCacheKey       string          `json:"prompt_cache_key,omitempty"`
+	PromptCacheRetention string          `json:"prompt_cache_retention,omitempty"`
+}
+
+type Tool struct {
+	Type        string         `json:"type"`
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+type Response struct {
+	ID                string             `json:"id"`
+	Object            string             `json:"object"`
+	CreatedAt         int64              `json:"created_at,omitempty"`
+	Status            string             `json:"status"`
+	Model             string             `json:"model,omitempty"`
+	Output            []OutputItem       `json:"output"`
+	OutputText        string             `json:"output_text,omitempty"`
+	Usage             Usage              `json:"usage,omitempty"`
+	Metadata          map[string]any     `json:"metadata,omitempty"`
+	IncompleteDetails *IncompleteDetails `json:"incomplete_details,omitempty"`
+	Error             *ErrorObject       `json:"error,omitempty"`
+}
+
+type OutputItem struct {
+	Type      string        `json:"type"`
+	ID        string        `json:"id,omitempty"`
+	Status    string        `json:"status,omitempty"`
+	Role      string        `json:"role,omitempty"`
+	Content   []ContentPart `json:"content,omitempty"`
+	CallID    string        `json:"call_id,omitempty"`
+	Name      string        `json:"name,omitempty"`
+	Arguments string        `json:"arguments,omitempty"`
+}
+
+type ContentPart struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+type Usage struct {
+	InputTokens        int                `json:"input_tokens,omitempty"`
+	OutputTokens       int                `json:"output_tokens,omitempty"`
+	TotalTokens        int                `json:"total_tokens,omitempty"`
+	InputTokensDetails InputTokensDetails `json:"input_tokens_details,omitempty"`
+}
+
+type InputTokensDetails struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+type IncompleteDetails struct {
+	Reason string `json:"reason"`
+}
+
+type ErrorResponse struct {
+	Error ErrorObject `json:"error"`
+}
+
+type ErrorObject struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Param   string `json:"param,omitempty"`
+	Code    string `json:"code,omitempty"`
+}
+
+type StreamEvent struct {
+	Event string
+	Data  any
+}
+
+type ResponseLifecycleEvent struct {
+	Type           string   `json:"type"`
+	SequenceNumber int64    `json:"sequence_number"`
+	Response       Response `json:"response"`
+}
+
+type OutputItemEvent struct {
+	Type           string     `json:"type"`
+	SequenceNumber int64      `json:"sequence_number"`
+	OutputIndex    int        `json:"output_index"`
+	Item           OutputItem `json:"item"`
+}
+
+type ContentPartEvent struct {
+	Type           string      `json:"type"`
+	SequenceNumber int64       `json:"sequence_number"`
+	OutputIndex    int         `json:"output_index"`
+	ContentIndex   int         `json:"content_index"`
+	Part           ContentPart `json:"part"`
+}
+
+type OutputTextDeltaEvent struct {
+	Type           string `json:"type"`
+	SequenceNumber int64  `json:"sequence_number"`
+	OutputIndex    int    `json:"output_index"`
+	ContentIndex   int    `json:"content_index"`
+	Delta          string `json:"delta"`
+}
+
+type OutputTextDoneEvent struct {
+	Type           string `json:"type"`
+	SequenceNumber int64  `json:"sequence_number"`
+	OutputIndex    int    `json:"output_index"`
+	ContentIndex   int    `json:"content_index"`
+	Text           string `json:"text"`
+}
+
+type FunctionCallArgumentsDeltaEvent struct {
+	Type           string `json:"type"`
+	SequenceNumber int64  `json:"sequence_number"`
+	OutputIndex    int    `json:"output_index"`
+	Delta          string `json:"delta"`
+}
+
+type FunctionCallArgumentsDoneEvent struct {
+	Type           string `json:"type"`
+	SequenceNumber int64  `json:"sequence_number"`
+	OutputIndex    int    `json:"output_index"`
+	Arguments      string `json:"arguments"`
+}

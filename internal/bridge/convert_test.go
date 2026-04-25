@@ -1,0 +1,140 @@
+package bridge_test
+
+import (
+	"encoding/json"
+	"testing"
+
+	"moonbridge/internal/anthropic"
+	"moonbridge/internal/bridge"
+	"moonbridge/internal/cache"
+	"moonbridge/internal/config"
+	"moonbridge/internal/openai"
+)
+
+func testBridge() *bridge.Bridge {
+	return bridge.New(config.Config{
+		DefaultMaxTokens: 1024,
+		ModelMap:         map[string]string{"gpt-test": "claude-test"},
+		Cache: config.CacheConfig{
+			Mode:           "explicit",
+			TTL:            "1h",
+			PromptCaching:  true,
+			MaxBreakpoints: 4,
+			MinCacheTokens: 1,
+		},
+	}, cache.NewMemoryRegistry())
+}
+
+func TestToAnthropicConvertsTextToolsToolChoiceAndCache(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model:           "gpt-test",
+		Instructions:    "You are helpful.",
+		Input:           json.RawMessage(`"hello"`),
+		MaxOutputTokens: 50,
+		PromptCacheKey:  "tenant-docs",
+		Tools: []openai.Tool{{
+			Type:        "function",
+			Name:        "lookup",
+			Description: "Lookup a record",
+			Parameters:  map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}},
+		}},
+		ToolChoice: json.RawMessage(`"required"`),
+	}
+
+	converted, plan, err := testBridge().ToAnthropic(request)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	if converted.Model != "claude-test" || converted.MaxTokens != 50 {
+		t.Fatalf("converted model/max = %s/%d", converted.Model, converted.MaxTokens)
+	}
+	if converted.System[0].Text != "You are helpful." {
+		t.Fatalf("system = %+v", converted.System)
+	}
+	if converted.Messages[0].Content[0].Text != "hello" {
+		t.Fatalf("messages = %+v", converted.Messages)
+	}
+	if converted.Tools[0].Name != "lookup" {
+		t.Fatalf("tools = %+v", converted.Tools)
+	}
+	if converted.ToolChoice.Type != "any" {
+		t.Fatalf("tool choice = %+v", converted.ToolChoice)
+	}
+	if plan.Mode != "explicit" || len(plan.Breakpoints) == 0 {
+		t.Fatalf("cache plan = %+v", plan)
+	}
+	if converted.Tools[0].CacheControl == nil || converted.System[0].CacheControl == nil {
+		t.Fatalf("cache controls not injected: tools=%+v system=%+v", converted.Tools, converted.System)
+	}
+}
+
+func TestToAnthropicConvertsFunctionCallOutput(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`[
+			{"type":"function_call_output","call_id":"toolu_123","output":"{\"ok\":true}"}
+		]`),
+	}
+
+	converted, _, err := testBridge().ToAnthropic(request)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	block := converted.Messages[0].Content[0]
+	if block.Type != "tool_result" || block.ToolUseID != "toolu_123" {
+		t.Fatalf("block = %+v", block)
+	}
+}
+
+func TestFromAnthropicNormalizesUsageAndToolUse(t *testing.T) {
+	response := anthropic.MessageResponse{
+		ID:         "msg_123",
+		Type:       "message",
+		Role:       "assistant",
+		StopReason: "tool_use",
+		Content: []anthropic.ContentBlock{
+			{Type: "text", Text: "Need a lookup."},
+			{Type: "tool_use", ID: "toolu_123", Name: "lookup", Input: json.RawMessage(`{"id":"42"}`)},
+		},
+		Usage: anthropic.Usage{
+			InputTokens:              10,
+			CacheReadInputTokens:     90,
+			CacheCreationInputTokens: 30,
+			OutputTokens:             12,
+		},
+	}
+
+	converted := testBridge().FromAnthropic(response, "gpt-test")
+	if converted.Status != "completed" {
+		t.Fatalf("status = %q", converted.Status)
+	}
+	if converted.OutputText != "Need a lookup." {
+		t.Fatalf("OutputText = %q", converted.OutputText)
+	}
+	if converted.Output[1].CallID != "toolu_123" || converted.Output[1].Arguments != `{"id":"42"}` {
+		t.Fatalf("function call = %+v", converted.Output[1])
+	}
+	if converted.Usage.InputTokens != 130 {
+		t.Fatalf("InputTokens = %d", converted.Usage.InputTokens)
+	}
+	if converted.Usage.InputTokensDetails.CachedTokens != 90 {
+		t.Fatalf("CachedTokens = %d", converted.Usage.InputTokensDetails.CachedTokens)
+	}
+}
+
+func TestFromAnthropicMapsMaxTokensToIncomplete(t *testing.T) {
+	converted := testBridge().FromAnthropic(anthropic.MessageResponse{
+		ID:         "msg_123",
+		Type:       "message",
+		Role:       "assistant",
+		StopReason: "max_tokens",
+		Content:    []anthropic.ContentBlock{{Type: "text", Text: "cut"}},
+	}, "gpt-test")
+
+	if converted.Status != "incomplete" {
+		t.Fatalf("status = %q", converted.Status)
+	}
+	if converted.IncompleteDetails == nil || converted.IncompleteDetails.Reason != "max_output_tokens" {
+		t.Fatalf("incomplete_details = %+v", converted.IncompleteDetails)
+	}
+}

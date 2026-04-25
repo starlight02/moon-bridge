@@ -437,6 +437,13 @@ provider:
 8. 增加能力开关、错误映射、超时重试、trace id。
 9. 增加兼容性测试：文本、多轮、缓存创建/命中/未命中、并发预热、工具调用、工具结果、max tokens、Provider error、streaming delta。
 
+## 首版实现状态
+
+- 已实现：配置加载、OpenAI/Anthropic DTO、Anthropic Provider client、非流式 `/v1/responses`、基础 SSE 输出、function tool 映射、tool result 映射、prompt cache planner、`cache_control` 注入、usage 归一化、OpenAI 风格错误。
+- 已测试：配置默认值与校验、DTO JSON、Provider client header/response/SSE 解析、缓存 planner、请求转换、响应转换、流式事件转换、HTTP handler。
+- 暂未实现：OpenAI 内置工具、文件 ID 解析、response retrieve/cancel、持久化 registry、真实 token 计数、后台预热 worker。
+- 当前缓存 registry 为内存实现，重启后不会保留命中状态；Anthropic 侧真实缓存仍由 Provider 管理。
+
 ## 官方资料
 
 - Anthropic Messages API：https://docs.anthropic.com/en/api/messages

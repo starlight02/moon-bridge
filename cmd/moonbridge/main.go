@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"log"
 	"os"
 
 	"moonbridge/internal/app"
 )
 
 func main() {
-	app.Run(os.Stdout)
+	if err := app.RunServerFromEnv(context.Background(), os.Stderr); err != nil {
+		log.Fatal(err)
+	}
 }
