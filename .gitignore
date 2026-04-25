@@ -1,0 +1,27 @@
+bin/
+.cache/
+coverage.out
+*.test
+.env
+.DS_Store
+
+# Agent / AI assistant local files
+helloagents/
+AGENTS.md
+CLAUDE.md
+.codex
+.codex/
+.claude
+.claude/
+.agents
+.agents/
+.cursor
+.cursor/
+.continue
+.continue/
+.gemini
+.gemini/
+.aider*
+.roo
+.roo/
+.mcp.json
