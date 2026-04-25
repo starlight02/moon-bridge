@@ -22,6 +22,7 @@ cp config.example.yml config.yml
 │   ├── app/                 # 应用组装
 │   ├── config/              # YAML 配置解析
 │   ├── bridge/              # 协议转换核心
+│   ├── extensions/          # Provider 扩展（如 DeepSeek V4）
 │   ├── cache/               # Prompt cache 规划
 │   ├── anthropic/           # Anthropic Messages 客户端
 │   ├── openai/              # OpenAI Responses DTO
@@ -84,6 +85,7 @@ go test ./internal/e2e/ -v -count=1
 - Codex 兼容：验证空 `cached_tokens` 序列化、namespace 展平、`web_search_call` 过滤、custom grammar 保留。
 - Cache planner：验证各种配置组合（off / automatic / explicit / hybrid）下的断点注入与注册表状态管理。
 - DTO：验证 `input_tokens_details.cached_tokens` 在值为 `0` 时仍被序列化。
+- DeepSeek V4：验证 reasoning_content 剥离、thinking 记忆/重注入、effort 映射、流式 delta 收集等逻辑。
 
 ## Debug
 

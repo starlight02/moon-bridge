@@ -135,6 +135,10 @@ Anthropic Messages API HTTP 客户端。
 
 OpenAI Responses 协议 DTO 定义。包含 `ResponsesRequest`、`Response`、`OutputItem`、`Usage`、`InputTokensDetails`（`cached_tokens` 无 `omitempty`，始终序列化）、以及全部 SSE 事件类型。
 
+### internal/extensions
+
+Provider 扩展模块。当前包含 DeepSeek V4 扩展（`deepseek_v4`），处理 reasoning_content 剥离与重注入、reasoning_effort → thinking 映射、流式 thinking 跟踪等 Provider 特有行为。其他 Provider 特有逻辑可直接在此目录下新增子包。
+
 ### internal/proxy
 
 透明代理实现。`ResponseServer` 和 `AnthropicServer` 分别对应两种协议的透明代理。均继承自共同的 `common.go` 中的 `copyHeaders`、`copyStreaming`、`upstreamURL` 等基础工具函数。

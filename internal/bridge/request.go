@@ -8,8 +8,8 @@ import (
 
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/cache"
-	"moonbridge/internal/logger"
 	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
+	"moonbridge/internal/logger"
 	"moonbridge/internal/openai"
 )
 
@@ -39,12 +39,19 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 
 	messages := make([]anthropic.Message, 0, len(items))
 	system := make([]anthropic.ContentBlock, 0)
+	seenToolHistory := false
 	for _, item := range items {
 		switch {
+		case item.Type == "reasoning":
+			continue
 		case item.Type == "function_call":
+			seenToolHistory = true
 			toolInput := json.RawMessage(item.Arguments)
 			if len(toolInput) == 0 {
 				toolInput = json.RawMessage(`{}`)
+			}
+			if bridge.deepseek != nil {
+				bridge.deepseek.PrependCachedForToolUse(&messages, firstNonEmpty(item.CallID, item.ID))
 			}
 			appendAssistantBlock(&messages, anthropic.ContentBlock{
 				Type:  "tool_use",
@@ -53,10 +60,14 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 				Input: toolInput,
 			})
 		case item.Type == "custom_tool_call":
+			seenToolHistory = true
 			toolName := item.Name
 			toolInput := json.RawMessage(item.Arguments)
 			if len(toolInput) == 0 {
 				toolName, toolInput = context.AnthropicToolUseForCustomTool(item.Name, item.Input)
+			}
+			if bridge.deepseek != nil {
+				bridge.deepseek.PrependCachedForToolUse(&messages, firstNonEmpty(item.CallID, item.ID))
 			}
 			appendAssistantBlock(&messages, anthropic.ContentBlock{
 				Type:  "tool_use",
@@ -65,6 +76,10 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 				Input: toolInput,
 			})
 		case item.Type == "local_shell_call":
+			seenToolHistory = true
+			if bridge.deepseek != nil {
+				bridge.deepseek.PrependCachedForToolUse(&messages, firstNonEmpty(item.CallID, item.ID))
+			}
 			appendAssistantBlock(&messages, anthropic.ContentBlock{
 				Type:  "tool_use",
 				ID:    firstNonEmpty(item.CallID, item.ID),
@@ -72,6 +87,7 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 				Input: localShellInputFromAction(item.Action),
 			})
 		case strings.HasSuffix(item.Type, "_output") || item.Type == "function_call_output":
+			seenToolHistory = true
 			appendToolResultBlock(&messages, anthropic.ContentBlock{
 				Type:      "tool_result",
 				ToolUseID: firstNonEmpty(item.CallID, item.ID),
@@ -85,6 +101,11 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 			blocks := contentBlocksFromRaw(item.Content)
 			if len(blocks) == 0 || isEmptyWebSearchPreludeBlocks(blocks) {
 				continue
+			}
+			if seenToolHistory {
+				if bridge.deepseek != nil {
+					blocks = bridge.deepseek.PrependCachedForAssistantText(blocks)
+				}
 			}
 			messages = append(messages, anthropic.Message{Role: "assistant", Content: blocks})
 		default:

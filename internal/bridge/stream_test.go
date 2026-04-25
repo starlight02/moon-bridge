@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"moonbridge/internal/anthropic"
+	"moonbridge/internal/config"
 	"moonbridge/internal/openai"
 )
 
@@ -494,6 +495,144 @@ func TestConvertStreamEventsMarksTextOutputCompletedInFinalResponse(t *testing.T
 	item := completed.Output[0]
 	if item.Type != "message" || item.Status != "completed" || len(item.Content) != 1 || item.Content[0].Text != "Hi" {
 		t.Fatalf("completed message item = %+v", item)
+	}
+}
+
+func TestDeepSeekThinkingIsStatefullyInjectedOnlyForToolCalls(t *testing.T) {
+	bridgeUnderTest := testBridgeWithConfig(config.Config{
+		DeepSeekV4:       true,
+		DefaultMaxTokens: 1024,
+		ModelMap:         map[string]string{"gpt-test": "deepseek-v4-pro"},
+		Cache: config.CacheConfig{
+			Mode:          "off",
+			PromptCaching: true,
+		},
+	})
+	events := []anthropic.StreamEvent{
+		{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant"}},
+		{Type: "content_block_start", Index: 0, ContentBlock: &anthropic.ContentBlock{Type: "thinking"}},
+		{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "thinking_delta", Thinking: "inspect before listing"}},
+		{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "signature_delta", Signature: "sig_1"}},
+		{Type: "content_block_stop", Index: 0},
+		{Type: "content_block_start", Index: 1, ContentBlock: &anthropic.ContentBlock{Type: "tool_use", ID: "call_ls", Name: "exec_command", Input: json.RawMessage(`{}`)}},
+		{Type: "content_block_delta", Index: 1, Delta: anthropic.StreamDelta{Type: "input_json_delta", PartialJSON: `{"cmd":"ls"}`}},
+		{Type: "content_block_stop", Index: 1},
+		{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "tool_use"}},
+		{Type: "message_stop"},
+	}
+
+	convertedEvents := bridgeUnderTest.ConvertStreamEvents(events, "gpt-test")
+	completed := streamLifecycleResponse(t, convertedEvents, "response.completed")
+	if len(completed.Output) != 1 || completed.Output[0].Type != "function_call" {
+		t.Fatalf("completed output = %+v", completed.Output)
+	}
+
+	followup := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`[
+			{"role":"user","content":[{"type":"input_text","text":"inspect"}],"type":"message"},
+			{"arguments":"{\"cmd\":\"ls\"}","call_id":"call_ls","name":"exec_command","type":"function_call"},
+			{"call_id":"call_ls","output":"README.md\n","type":"function_call_output"}
+		]`),
+	}
+	converted, _, err := bridgeUnderTest.ToAnthropic(followup)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	if len(converted.Messages) != 3 {
+		t.Fatalf("messages = %+v", converted.Messages)
+	}
+	assistant := converted.Messages[1]
+	if len(assistant.Content) != 2 {
+		t.Fatalf("assistant content = %+v", assistant.Content)
+	}
+	if assistant.Content[0].Type != "thinking" || assistant.Content[0].Thinking != "inspect before listing" || assistant.Content[0].Signature != "sig_1" {
+		t.Fatalf("thinking block = %+v", assistant.Content[0])
+	}
+	if assistant.Content[1].Type != "tool_use" || assistant.Content[1].ID != "call_ls" {
+		t.Fatalf("tool use = %+v", assistant.Content[1])
+	}
+
+	missingCacheFollowup := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`[
+			{"role":"user","content":[{"type":"input_text","text":"inspect"}],"type":"message"},
+			{"arguments":"{\"cmd\":\"pwd\"}","call_id":"call_pwd","name":"exec_command","type":"function_call"},
+			{"call_id":"call_pwd","output":"/repo\n","type":"function_call_output"}
+		]`),
+	}
+	convertedMissing, _, err := bridgeUnderTest.ToAnthropic(missingCacheFollowup)
+	if err != nil {
+		t.Fatalf("ToAnthropic() missing cache error = %v", err)
+	}
+	if got := convertedMissing.Messages[1].Content[0].Type; got == "thinking" {
+		t.Fatalf("unexpected thinking injection for uncached tool call: %+v", convertedMissing.Messages[1].Content)
+	}
+}
+
+func TestDeepSeekThinkingIsInjectedForToolChainFinalAssistantText(t *testing.T) {
+	bridgeUnderTest := testBridgeWithConfig(config.Config{
+		DeepSeekV4:       true,
+		DefaultMaxTokens: 1024,
+		ModelMap:         map[string]string{"gpt-test": "deepseek-v4-pro"},
+		Cache: config.CacheConfig{
+			Mode:          "off",
+			PromptCaching: true,
+		},
+	})
+	events := []anthropic.StreamEvent{
+		{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant"}},
+		{Type: "content_block_start", Index: 0, ContentBlock: &anthropic.ContentBlock{Type: "thinking"}},
+		{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "thinking_delta", Thinking: "summarize after tools"}},
+		{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "signature_delta", Signature: "sig_text"}},
+		{Type: "content_block_stop", Index: 0},
+		{Type: "content_block_start", Index: 1, ContentBlock: &anthropic.ContentBlock{Type: "text"}},
+		{Type: "content_block_delta", Index: 1, Delta: anthropic.StreamDelta{Type: "text_delta", Text: "Project summary"}},
+		{Type: "content_block_stop", Index: 1},
+		{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "end_turn"}},
+		{Type: "message_stop"},
+	}
+	bridgeUnderTest.ConvertStreamEvents(events, "gpt-test")
+
+	followup := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`[
+			{"role":"user","content":[{"type":"input_text","text":"inspect"}],"type":"message"},
+			{"arguments":"{\"cmd\":\"ls\"}","call_id":"call_ls","name":"exec_command","type":"function_call"},
+			{"call_id":"call_ls","output":"README.md\n","type":"function_call_output"},
+			{"role":"assistant","content":[{"type":"output_text","text":"Project summary"}],"type":"message"},
+			{"role":"user","content":[{"type":"input_text","text":"update docs"}],"type":"message"}
+		]`),
+	}
+	converted, _, err := bridgeUnderTest.ToAnthropic(followup)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	assistant := converted.Messages[3]
+	if assistant.Role != "assistant" || len(assistant.Content) != 2 {
+		t.Fatalf("assistant = %+v", assistant)
+	}
+	if assistant.Content[0].Type != "thinking" || assistant.Content[0].Thinking != "summarize after tools" || assistant.Content[0].Signature != "sig_text" {
+		t.Fatalf("thinking block = %+v", assistant.Content[0])
+	}
+	if assistant.Content[1].Type != "text" || assistant.Content[1].Text != "Project summary" {
+		t.Fatalf("text block = %+v", assistant.Content[1])
+	}
+
+	noToolHistory := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`[
+			{"role":"user","content":[{"type":"input_text","text":"hello"}],"type":"message"},
+			{"role":"assistant","content":[{"type":"output_text","text":"Project summary"}],"type":"message"},
+			{"role":"user","content":[{"type":"input_text","text":"continue"}],"type":"message"}
+		]`),
+	}
+	convertedNoTool, _, err := bridgeUnderTest.ToAnthropic(noToolHistory)
+	if err != nil {
+		t.Fatalf("ToAnthropic() no tool history error = %v", err)
+	}
+	if got := convertedNoTool.Messages[1].Content[0].Type; got == "thinking" {
+		t.Fatalf("unexpected thinking for prompt-only history: %+v", convertedNoTool.Messages[1].Content)
 	}
 }
 

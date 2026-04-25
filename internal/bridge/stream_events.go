@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"moonbridge/internal/anthropic"
-	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/openai"
 )
 
@@ -16,13 +15,11 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 	if block == nil {
 		return nil
 	}
+	if converter.deepseek != nil && converter.deepseek.Start(index, block) {
+		return nil
+	}
 	switch block.Type {
 	case "text":
-		if converter.bridge.cfg.DeepSeekV4Enabled() && deepseekv4.IsReasoningContentBlock(block) {
-			converter.itemIDs[index] = fmt.Sprintf("msg_reasoning_%d", index)
-			converter.contentText[index] = ""
-			return nil
-		}
 		converter.itemIDs[index] = fmt.Sprintf("msg_item_%d", index)
 		converter.contentText[index] = ""
 		return nil
@@ -36,6 +33,9 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 				Action: localShellActionFromRaw(block.Input),
 			}
 			converter.itemIDs[index] = item.ID
+			if converter.deepseek != nil {
+				converter.deepseek.RecordToolCall(block.ID)
+			}
 			converter.addOutput(index, item)
 			return []openai.StreamEvent{converter.outputItem("response.output_item.added", index, item)}
 		}
@@ -54,6 +54,9 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 			if len(block.Input) > 0 && string(block.Input) != "{}" {
 				converter.customToolInitialInputs[index] = string(block.Input)
 			}
+			if converter.deepseek != nil {
+				converter.deepseek.RecordToolCall(block.ID)
+			}
 			converter.addOutput(index, item)
 			return []openai.StreamEvent{converter.outputItem("response.output_item.added", index, item)}
 		}
@@ -66,6 +69,9 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 			Status:    "in_progress",
 		}
 		converter.itemIDs[index] = item.ID
+		if converter.deepseek != nil {
+			converter.deepseek.RecordToolCall(block.ID)
+		}
 		converter.addOutput(index, item)
 		return []openai.StreamEvent{converter.outputItem("response.output_item.added", index, item)}
 	case "server_tool_use":
@@ -81,51 +87,10 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 
 func (converter *streamConverter) contentBlockDelta(event anthropic.StreamEvent) []openai.StreamEvent {
 	index := event.Index
+	if converter.deepseek != nil && converter.deepseek.Delta(index, event.Delta) {
+		return nil
+	}
 	switch event.Delta.Type {
-	case "reasoning_content_delta":
-		if event.Delta.Text == "" {
-			return nil
-		}
-		// DeepSeek V4 streams reasoning content before normal text.
-		// We treat it as a separate message output item.
-		if !converter.hasOutput(index) {
-			item := openai.OutputItem{
-				Type:    "message",
-				ID:      converter.itemIDs[index],
-				Status:  "in_progress",
-				Role:    "assistant",
-				Content: []openai.ContentPart{},
-			}
-			converter.addOutput(index, item)
-			return []openai.StreamEvent{
-				converter.outputItem("response.output_item.added", index, item),
-				converter.contentPart("response.content_part.added", index, 0, openai.ContentPart{Type: "output_text"}),
-				openai.StreamEvent{
-					Event: "response.output_text.delta",
-					Data: openai.OutputTextDeltaEvent{
-						Type:           "response.output_text.delta",
-						SequenceNumber: converter.next(),
-						ItemID:         converter.itemIDs[index],
-						OutputIndex:    converter.outputIndex(index),
-						ContentIndex:   0,
-						Delta:          event.Delta.Text,
-					},
-				},
-			}
-		}
-		return []openai.StreamEvent{
-			openai.StreamEvent{
-				Event: "response.output_text.delta",
-				Data: openai.OutputTextDeltaEvent{
-					Type:           "response.output_text.delta",
-					SequenceNumber: converter.next(),
-					ItemID:         converter.itemIDs[index],
-					OutputIndex:    converter.outputIndex(index),
-					ContentIndex:   0,
-					Delta:          event.Delta.Text,
-				},
-			},
-		}
 	case "text_delta":
 		if event.Delta.Text == "" {
 			return nil
@@ -192,13 +157,12 @@ func (converter *streamConverter) contentBlockDelta(event anthropic.StreamEvent)
 
 func (converter *streamConverter) contentBlockStop(event anthropic.StreamEvent) []openai.StreamEvent {
 	index := event.Index
+	if converter.deepseek != nil && converter.deepseek.Stop(index) {
+		return nil
+	}
 	if text, ok := converter.contentText[index]; ok {
 		if isEmptyWebSearchPrelude(text) {
 			return nil
-		}
-		var isReasoning bool
-		if converter.bridge.cfg.DeepSeekV4Enabled() && strings.HasPrefix(converter.itemIDs[index], "msg_reasoning_") {
-			isReasoning = true
 		}
 		var events []openai.StreamEvent
 		if !converter.hasOutput(index) {
@@ -219,9 +183,6 @@ func (converter *streamConverter) contentBlockStop(event anthropic.StreamEvent) 
 			)
 		}
 		converter.response.OutputText += text
-		if isReasoning {
-			converter.response.OutputText = strings.TrimPrefix(converter.response.OutputText, text)
-		}
 		item := openai.OutputItem{
 			Type:    "message",
 			ID:      converter.itemIDs[index],

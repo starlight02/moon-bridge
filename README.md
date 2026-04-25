@@ -71,6 +71,10 @@ provider:
 - `enabled`：跳过探测，始终注入 Anthropic `web_search_20250305`
 - `disabled`：不注入搜索工具，Codex 仍可继续使用其他工具
 
+### DeepSeek V4 扩展
+
+在 `config.yml` 中设置 `provider.deepseek_v4: true` 可启用 DeepSeek V4 专用兼容逻辑，包括 reasoning_content 剥离与重注入、reasoning_effort → thinking 映射、推理输出展示等。详见 [docs/deepseek-v4.md](docs/deepseek-v4.md)。
+
 ### 调试抓包
 
 打开 `trace_requests: true` 后，每次请求和响应会按模式写入 `trace/` 目录，方便排查问题。API Key 等敏感信息会自动脱敏。

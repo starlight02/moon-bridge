@@ -10,8 +10,8 @@ import (
 
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/cache"
-	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/config"
+	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/openai"
 )
@@ -19,6 +19,7 @@ import (
 type Bridge struct {
 	cfg      config.Config
 	registry *cache.MemoryRegistry
+	deepseek *deepseekv4.State
 }
 
 type ConversionContext struct {
@@ -121,7 +122,11 @@ func New(cfg config.Config, registry *cache.MemoryRegistry) *Bridge {
 	if registry == nil {
 		registry = cache.NewMemoryRegistry()
 	}
-	return &Bridge{cfg: cfg, registry: registry}
+	var deepseek *deepseekv4.State
+	if cfg.DeepSeekV4Enabled() {
+		deepseek = deepseekv4.NewState()
+	}
+	return &Bridge{cfg: cfg, registry: registry, deepseek: deepseek}
 }
 
 func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest) (anthropic.MessageRequest, cache.CacheCreationPlan, error) {
@@ -216,6 +221,9 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 		}, response.Usage.InputTokens)
 		log.Debug("updated cache registry", "key", plan.LocalKey, "input_tokens", response.Usage.InputTokens, "cache_creation", response.Usage.CacheCreationInputTokens, "cache_read", response.Usage.CacheReadInputTokens)
 	}
+	if bridge.deepseek != nil {
+		bridge.deepseek.RememberFromContent(response.Content)
+	}
 
 	output := make([]openai.OutputItem, 0, len(response.Content))
 	var outputText strings.Builder
@@ -223,6 +231,8 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 
 	for index, block := range response.Content {
 		switch block.Type {
+		case "thinking", "reasoning_content":
+			continue
 		case "text":
 			if bridge.cfg.DeepSeekV4Enabled() && deepseekv4.IsReasoningContentBlock(&block) {
 				continue
@@ -295,11 +305,6 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 			Role:    "assistant",
 			Content: messageContent,
 		})
-	}
-
-	if bridge.cfg.DeepSeekV4Enabled() {
-		reasoning := deepseekv4.ExtractReasoningContent(response.Content)
-		output = deepseekv4.InjectReasoningIntoOutput(output, reasoning)
 	}
 
 	status, incomplete := statusFromStopReason(response.StopReason)

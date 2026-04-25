@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"moonbridge/internal/anthropic"
+	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/openai"
 )
 
@@ -26,6 +27,9 @@ func (bridge *Bridge) ConvertStreamEventsWithContext(events []anthropic.StreamEv
 		itemIDs:                 map[int]string{},
 		outputIndexes:           map[int]int{},
 	}
+	if bridge.deepseek != nil {
+		converter.deepseek = deepseekv4.NewStreamState()
+	}
 	var converted []openai.StreamEvent
 	for _, event := range events {
 		converted = append(converted, converter.convert(event)...)
@@ -46,6 +50,7 @@ type streamConverter struct {
 	customToolNames         map[int]string
 	webSearchActions        map[int]*openai.ToolAction
 	webSearchInputs         map[int]string
+	deepseek                *deepseekv4.StreamState
 	itemIDs                 map[int]string
 	outputIndexes           map[int]int
 }
@@ -78,6 +83,9 @@ func (converter *streamConverter) convert(event anthropic.StreamEvent) []openai.
 			converter.response.Usage = normalizeUsage(*event.Usage)
 		}
 	case "message_stop":
+		if converter.bridge.deepseek != nil {
+			converter.bridge.deepseek.RememberStreamResult(converter.deepseek, converter.response.OutputText)
+		}
 		if converter.response.Status == "" || converter.response.Status == "in_progress" {
 			converter.response.Status = "completed"
 		}

@@ -69,6 +69,9 @@ func StripReasoningContent(raw json.RawMessage) json.RawMessage {
 func ExtractReasoningContent(blocks []anthropic.ContentBlock) string {
 	var sb strings.Builder
 	for _, b := range blocks {
+		if b.Type == "thinking" {
+			sb.WriteString(b.Thinking)
+		}
 		if b.Type == "reasoning_content" {
 			sb.WriteString(b.Text)
 		}
@@ -107,6 +110,9 @@ func StreamDeltaForReasoning(delta anthropic.StreamDelta) string {
 	if delta.Type == "reasoning_content_delta" {
 		return delta.Text
 	}
+	if delta.Type == "thinking_delta" {
+		return firstNonEmpty(delta.Thinking, delta.Text)
+	}
 	return ""
 }
 
@@ -116,7 +122,16 @@ func IsReasoningContentBlock(block *anthropic.ContentBlock) bool {
 	if block == nil {
 		return false
 	}
-	return block.Type == "reasoning_content"
+	return block.Type == "thinking" || block.Type == "reasoning_content"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // ToAnthropicRequest mutates an Anthropic request for DeepSeek V4 quirks:
