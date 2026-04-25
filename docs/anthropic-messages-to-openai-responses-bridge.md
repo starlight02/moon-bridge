@@ -6,29 +6,25 @@ Supported clients include [Codex CLI](https://github.com/openai/codex), custom t
 
 ## Architecture
 
-```
-OpenAI Responses Client
-        |
-        | POST /v1/responses
-        v
-HTTP Handler (/v1/responses, /responses)
-  - Request parsing & auth check
-  - Trace recording (optional)
-        |
-        v
-Bridge (Protocol Translator)
-  - Request:  OpenAI Responses → Anthropic Messages
-  - Response: Anthropic Message → OpenAI Response object
-  - Stream:   Anthropic SSE → OpenAI Responses SSE events
-  - Tool:     OpenAI function/custom → Anthropic tool + reverse
-  - Cache:    CacheCreationPlanner + cache_control injection
-  - Error:    Provider errors → OpenAI-style error objects
-        |
-        v
-Provider Client
-  - POST /v1/messages (non-streaming)
-  - POST /v1/messages?stream=true (streaming)
-  - Auth, retry, timeout, User-Agent
+```mermaid
+flowchart TD
+    A[OpenAI Responses Client] -->|POST /v1/responses| B[HTTP Handler<br/>/v1/responses, /responses]
+    B --> C[Bridge<br/>Protocol Translator]
+    C --> D[Provider Client]
+    D -->|POST /v1/messages| E[(Anthropic Provider)]
+    D -->|POST /v1/messages?stream=true| E
+
+    subgraph BridgeDetails [Bridge Capabilities]
+        direction LR
+        C1[Request<br/>OpenAI → Anthropic]
+        C2[Response<br/>Anthropic → OpenAI]
+        C3[Stream<br/>SSE conversion]
+        C4[Tool<br/>function/custom mapping]
+        C5[Cache<br/>planner + injection]
+        C6[Error<br/>normalization]
+    end
+
+    C --> BridgeDetails
 ```
 
 Package layout (Go module `moonbridge`):
