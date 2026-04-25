@@ -47,6 +47,7 @@ type Config struct {
 	Cache             CacheConfig
 	ResponseProxy     ResponseProxyConfig
 	AnthropicProxy    AnthropicProxyConfig
+	DeepSeekV4        bool
 }
 
 type ResponseProxyConfig struct {
@@ -241,4 +242,7 @@ func providerModelMap(models map[string]ProviderModelConfig) map[string]string {
 		normalized[strings.TrimSpace(alias)] = strings.TrimSpace(model.Name)
 	}
 	return normalized
+}
+func (cfg Config) DeepSeekV4Enabled() bool {
+	return cfg.DeepSeekV4
 }

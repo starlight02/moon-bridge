@@ -10,6 +10,7 @@ import (
 
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/cache"
+	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/config"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/openai"
@@ -177,6 +178,10 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest) (anthropic.Me
 		Metadata:      request.Metadata,
 	}
 
+	if bridge.cfg.DeepSeekV4Enabled() {
+		deepseekv4.ToAnthropicRequest(&converted)
+	}
+
 	plan, err := bridge.planCache(request, converted)
 	if err != nil {
 		log.Warn("cache planning failed", "error", err)
@@ -219,6 +224,9 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 	for index, block := range response.Content {
 		switch block.Type {
 		case "text":
+			if bridge.cfg.DeepSeekV4Enabled() && deepseekv4.IsReasoningContentBlock(&block) {
+				continue
+			}
 			part := openai.ContentPart{Type: "output_text", Text: block.Text}
 			messageContent = append(messageContent, part)
 			outputText.WriteString(block.Text)
@@ -287,6 +295,11 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 			Role:    "assistant",
 			Content: messageContent,
 		})
+	}
+
+	if bridge.cfg.DeepSeekV4Enabled() {
+		reasoning := deepseekv4.ExtractReasoningContent(response.Content)
+		output = deepseekv4.InjectReasoningIntoOutput(output, reasoning)
 	}
 
 	status, incomplete := statusFromStopReason(response.StopReason)

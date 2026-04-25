@@ -34,6 +34,7 @@ type ProviderFileConfig struct {
 	DefaultMaxTokens int                                `yaml:"default_max_tokens"`
 	DefaultModel     string                             `yaml:"default_model"`
 	Models           map[string]ProviderModelFileConfig `yaml:"models"`
+	DeepSeekV4       bool                               `yaml:"deepseek_v4"`
 }
 
 type CacheFileConfig struct {
@@ -140,6 +141,7 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 		ProviderModels:    providerModels,
 		Cache:             fromCacheFileConfig(fileConfig.Cache),
 		ResponseProxy:     FromResponseProxyFileConfig(fileConfig.Developer.Proxy.Response),
+		DeepSeekV4:        fileConfig.Provider.DeepSeekV4,
 		AnthropicProxy:    FromAnthropicProxyFileConfig(fileConfig.Developer.Proxy.Anthropic),
 	}
 

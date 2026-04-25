@@ -9,12 +9,16 @@ import (
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/logger"
+	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/openai"
 )
 
 func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContext) ([]anthropic.Message, []anthropic.ContentBlock, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil, nil
+	}
+	if bridge.cfg.DeepSeekV4Enabled() {
+		raw = deepseekv4.StripReasoningContent(raw)
 	}
 	trimmed := strings.TrimSpace(string(raw))
 	if strings.HasPrefix(trimmed, "\"") {

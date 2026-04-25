@@ -23,6 +23,9 @@ provider:
     max_uses: 8
   default_max_tokens: 1024
   default_model: "moonbridge"
+  # deepseek_v4: true  # Enable DeepSeek V4 thinking_mode extension
+  #                     Strips reasoning_content from input, extracts it from output,
+  #                     and drops unsupported params (temperature, top_p).
   models:
     moonbridge:
       name: "provider-model-name"
