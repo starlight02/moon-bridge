@@ -400,8 +400,12 @@ func (bridge *Bridge) ErrorResponse(err error) (int, openai.ErrorResponse) {
 		}}
 	}
 	if providerError, ok := anthropic.IsProviderError(err); ok {
+		msg := providerError.Error()
+		if bridge.cfg.DeepSeekV4Enabled() && isDeepSeekThinkingHistoryError(msg) {
+			msg = "MoonBridge does not support resuming DeepSeek thinking-mode sessions. Please start a new conversation."
+		}
 		return providerError.OpenAIStatus(), openai.ErrorResponse{Error: openai.ErrorObject{
-			Message: providerError.Error(),
+			Message: msg,
 			Type:    providerError.OpenAIType(),
 			Code:    providerError.OpenAICode(),
 		}}
@@ -417,4 +421,10 @@ func (bridge *Bridge) ErrorResponse(err error) (int, openai.ErrorResponse) {
 // Delegates to Config.ProviderFor.
 func (bridge *Bridge) ProviderFor(modelAlias string) string {
 	return bridge.cfg.ProviderFor(modelAlias)
+}
+
+// isDeepSeekThinkingHistoryError detects the DeepSeek error that fires when
+// assistant messages lack required thinking blocks in thinking mode.
+func isDeepSeekThinkingHistoryError(msg string) bool {
+	return strings.Contains(msg, "content[].thinking") && strings.Contains(msg, "thinking mode")
 }
