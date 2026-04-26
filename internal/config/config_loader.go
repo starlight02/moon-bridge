@@ -122,7 +122,7 @@ func LoadFromFile(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("read config %s: %w", path, err)
 	}
-	return LoadFromYAML(data)
+	return LoadFromYAML([]byte(os.ExpandEnv(string(data))))
 }
 
 func LoadFromYAML(data []byte) (Config, error) {

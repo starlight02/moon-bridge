@@ -437,11 +437,13 @@ func TestLoadFromFileExpandsEnvironmentVariables(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(`
 mode: Transform
 provider:
-  base_url: https://provider.example.test
-  api_key: "${MOONBRIDGE_TEST_API_KEY}"
-  models:
-    moonbridge:
-      name: claude-test
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: "${MOONBRIDGE_TEST_API_KEY}"
+      models:
+        moonbridge:
+          name: claude-test
 `), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
