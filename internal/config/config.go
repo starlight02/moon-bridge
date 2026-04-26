@@ -94,6 +94,7 @@ type CacheConfig struct {
 	MinCacheTokens           int
 	ExpectedReuse            int
 	MinimumValueScore        int
+	MinBreakpointTokens      int `yaml:"min_breakpoint_tokens"`
 }
 
 type ProviderModelConfig struct {

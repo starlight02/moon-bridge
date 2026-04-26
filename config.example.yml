@@ -84,6 +84,7 @@ cache:
   min_cache_tokens: 1024
   expected_reuse: 2
   minimum_value_score: 2048
+  min_breakpoint_tokens: 1024  # minimum tokens for a scope to receive a cache breakpoint
 
 developer:
   proxy:

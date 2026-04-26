@@ -290,6 +290,7 @@ func (bridge *Bridge) planCache(request openai.ResponsesRequest, converted anthr
 		MinCacheTokens:           cfg.MinCacheTokens,
 		ExpectedReuse:            cfg.ExpectedReuse,
 		MinimumValueScore:        cfg.MinimumValueScore,
+		MinBreakpointTokens:      cfg.MinBreakpointTokens,
 	}, bridge.registry)
 	return planner.Plan(cache.PlanInput{
 		ProviderID:         "anthropic",
@@ -304,6 +305,8 @@ func (bridge *Bridge) planCache(request openai.ResponsesRequest, converted anthr
 		SystemBlockCount:   len(converted.System),
 		MessageCount:       len(converted.Messages),
 		EstimatedTokens:    estimateTokens(converted),
+		EstimatedToolTokens:   estimatePartTokens(converted.Tools),
+		EstimatedSystemTokens: estimatePartTokens(converted.System),
 	})
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/bridge"
+	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
 	"moonbridge/internal/extensions/websearchinjected"
 	"moonbridge/internal/logger"
@@ -166,7 +167,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 
 	if responsesRequest.Stream {
 		log.Debug("handling streaming request", "model", responsesRequest.Model)
-		server.handleStream(writer, request, responsesRequest, anthropicRequest, record, conversionContext, sess, effectiveProvider)
+		server.handleStream(writer, request, responsesRequest, anthropicRequest, plan, record, conversionContext, sess, effectiveProvider)
 		return
 	}
 
@@ -199,7 +200,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	writeJSON(writer, http.StatusOK, openAIResponse)
 }
 
-func (server *Server) handleStream(writer http.ResponseWriter, request *http.Request, responsesRequest openai.ResponsesRequest, anthropicRequest anthropic.MessageRequest, record mbtrace.Record, context bridge.ConversionContext, sess *session.Session, provider Provider) {
+func (server *Server) handleStream(writer http.ResponseWriter, request *http.Request, responsesRequest openai.ResponsesRequest, anthropicRequest anthropic.MessageRequest, plan cache.CacheCreationPlan, record mbtrace.Record, context bridge.ConversionContext, sess *session.Session, provider Provider) {
 	log := logger.L().With("model", responsesRequest.Model)
 	log.Debug("starting stream")
 	stream, err := provider.StreamMessage(request.Context(), anthropicRequest)
@@ -243,9 +244,22 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 	}
 	// Extract usage from message_delta event
 	var usage anthropic.Usage
-	for _, event := range events {
-		if event.Type == "message_delta" && event.Usage != nil {
-			usage = *event.Usage
+	for _, ev := range events {
+		switch {
+		case ev.Type == "n" && ev.Message != nil:
+			// message_start carries cache_creation / cache_read token counts
+			usage.InputTokens = ev.Message.Usage.InputTokens
+			usage.CacheCreationInputTokens = ev.Message.Usage.CacheCreationInputTokens
+			usage.CacheReadInputTokens = ev.Message.Usage.CacheReadInputTokens
+		case ev.Type == "message_delta" && ev.Usage != nil:
+			usage.OutputTokens = ev.Usage.OutputTokens
+			// message_delta may also carry cache fields in some providers
+			if ev.Usage.CacheCreationInputTokens > 0 {
+				usage.CacheCreationInputTokens = ev.Usage.CacheCreationInputTokens
+			}
+			if ev.Usage.CacheReadInputTokens > 0 {
+				usage.CacheReadInputTokens = ev.Usage.CacheReadInputTokens
+			}
 		}
 	}
 	if server.stats != nil {
@@ -257,6 +271,12 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 		})
 	}
 	logUsageLine(anthropicRequest.Model, stats.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens}, server.stats)
+	// Update cache registry from streaming usage signals.
+	server.bridge.UpdateRegistryFromUsage(plan, cache.UsageSignals{
+		InputTokens:              usage.InputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+	}, usage.InputTokens)
 }
 
 // resolveProvider selects the correct Provider for a given model alias.

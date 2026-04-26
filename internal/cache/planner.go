@@ -17,6 +17,9 @@ const (
 	StateNotCacheable = "not_cacheable"
 	StateMissed       = "missed"
 	StateFailed       = "failed"
+
+	// Anthropic requires at least 1024 tokens for a cacheable prefix block.
+	minCacheableTokens = 1024
 )
 
 type PlannerConfig struct {
@@ -29,6 +32,7 @@ type PlannerConfig struct {
 	MinCacheTokens           int
 	ExpectedReuse            int
 	MinimumValueScore        int
+	MinBreakpointTokens      int // minimum tokens for a scope to get a breakpoint (default: 1024)
 }
 
 type PlanInput struct {
@@ -45,6 +49,8 @@ type PlanInput struct {
 	SystemBlockCount   int
 	MessageCount       int
 	EstimatedTokens    int
+	EstimatedToolTokens   int // estimated tokens for tool definitions
+	EstimatedSystemTokens int // estimated tokens for system blocks
 }
 
 type MessageBreakpointCandidate struct {
@@ -59,6 +65,7 @@ type CacheCreationPlan struct {
 	Mode        string
 	TTL         string
 	LocalKey    string
+	PrefixKey   string // stable across turns (excludes messages hash)
 	Breakpoints []CacheBreakpoint
 	WarmPolicy  string
 	Reason      string
@@ -116,7 +123,9 @@ func (registry *MemoryRegistry) Set(entry RegistryEntry) {
 	registry.entries[entry.LocalKey] = entry
 }
 
-func (registry *MemoryRegistry) UpdateFromUsage(key string, usage UsageSignals, inputTokens int) {
+// UpdateFromUsage updates the registry entry for the given key based on upstream usage signals.
+// ttl controls how long a warm entry stays valid; pass 0 to use the default 5 minutes.
+func (registry *MemoryRegistry) UpdateFromUsage(key string, usage UsageSignals, inputTokens int, ttl ...time.Duration) {
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
 
@@ -127,11 +136,16 @@ func (registry *MemoryRegistry) UpdateFromUsage(key string, usage UsageSignals, 
 		entry.CreatedAt = now
 	}
 
+	expiry := 5 * time.Minute
+	if len(ttl) > 0 && ttl[0] > 0 {
+		expiry = ttl[0]
+	}
+
 	switch {
 	case usage.CacheCreationInputTokens > 0:
 		entry.State = StateWarm
 		entry.CacheCreationInputTokens = usage.CacheCreationInputTokens
-		entry.ExpiresAt = now.Add(5 * time.Minute)
+		entry.ExpiresAt = now.Add(expiry)
 	case usage.CacheReadInputTokens > 0:
 		entry.State = StateWarm
 		entry.CacheReadInputTokens = usage.CacheReadInputTokens
@@ -190,12 +204,13 @@ func (planner *Planner) Plan(input PlanInput) (CacheCreationPlan, error) {
 		Mode:       effectiveMode(useAutomatic, useExplicit),
 		TTL:        planner.cfg.TTL,
 		LocalKey:   localKey(input, planner.cfg.TTL),
+		PrefixKey:  prefixKey(input, planner.cfg.TTL),
 		WarmPolicy: "none",
 	}
 	if planner.registry != nil {
-		if entry, ok := planner.registry.Get(plan.LocalKey); ok && entry.State == StateWarm && (entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(time.Now())) {
+		if entry, ok := planner.registry.Get(plan.PrefixKey); ok && entry.State == StateWarm && (entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(time.Now())) {
 			plan.Reason = "registry_warm"
-			log.Debug("cache registry warm", "key", plan.LocalKey)
+			log.Debug("cache registry warm", "prefix_key", plan.PrefixKey)
 		}
 	}
 
@@ -253,12 +268,27 @@ func (planner *Planner) breakpoints(input PlanInput) []CacheBreakpoint {
 		})
 	}
 	if input.ToolCount > 0 {
-		lastToolIndex := input.ToolCount - 1
-		add("tools", "tools["+itoa(lastToolIndex)+"]", input.ToolsHash, lastToolIndex, -1)
+		minBP := planner.cfg.MinBreakpointTokens
+		if minBP <= 0 {
+			minBP = minCacheableTokens
+		}
+		skip := input.EstimatedToolTokens > 0 && input.EstimatedToolTokens < minBP
+		if !skip {
+			lastToolIndex := input.ToolCount - 1
+			add("tools", "tools["+itoa(lastToolIndex)+"]", input.ToolsHash, lastToolIndex, -1)
+		}
 	}
 	if input.SystemBlockCount > 0 {
-		lastSystemIndex := input.SystemBlockCount - 1
-		add("system", "system["+itoa(lastSystemIndex)+"]", input.SystemHash, lastSystemIndex, -1)
+		minBP := planner.cfg.MinBreakpointTokens
+		if minBP <= 0 {
+			minBP = minCacheableTokens
+		}
+		cumulativePrefix := input.EstimatedToolTokens + input.EstimatedSystemTokens
+		skip := cumulativePrefix > 0 && cumulativePrefix < minBP
+		if !skip {
+			lastSystemIndex := input.SystemBlockCount - 1
+			add("system", "system["+itoa(lastSystemIndex)+"]", input.SystemHash, lastSystemIndex, -1)
+		}
 	}
 	remaining := maxBreakpoints - len(breakpoints)
 	if remaining > 0 {
@@ -378,6 +408,24 @@ func localKey(input PlanInput, ttl string) string {
 		input.ToolsHash,
 		input.SystemHash,
 		input.MessagePrefixHash,
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+// prefixKey generates a key that is stable across conversation turns.
+// It excludes MessagePrefixHash so that only the tools+system prefix
+// determines the key, enabling cross-turn cache state tracking.
+func prefixKey(input PlanInput, ttl string) string {
+	parts := []string{
+		input.ProviderID,
+		input.UpstreamWorkspace,
+		input.UpstreamAPIKeyID,
+		input.Model,
+		ttl,
+		input.PromptCacheKey,
+		input.ToolsHash,
+		input.SystemHash,
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:])

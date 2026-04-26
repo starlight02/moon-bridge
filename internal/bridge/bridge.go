@@ -243,6 +243,20 @@ func (bridge *Bridge) FromAnthropicWithContext(response anthropic.MessageRespons
 	return bridge.FromAnthropicWithPlanAndContext(response, model, cache.CacheCreationPlan{}, context, nil)
 }
 
+// UpdateRegistryFromUsage updates the in-memory cache registry from upstream usage signals.
+// This is intended for the streaming path where FromAnthropicWithPlan is not called.
+func (bridge *Bridge) UpdateRegistryFromUsage(plan cache.CacheCreationPlan, signals cache.UsageSignals, inputTokens int) {
+	key := plan.PrefixKey
+	if key == "" {
+		key = plan.LocalKey
+	}
+	if key == "" {
+		return
+	}
+	bridge.registry.UpdateFromUsage(key, signals, inputTokens, parseTTL(plan.TTL))
+	logger.L().Debug("updated cache registry (stream)", "key", key, "input_tokens", inputTokens, "cache_creation", signals.CacheCreationInputTokens, "cache_read", signals.CacheReadInputTokens)
+}
+
 func (bridge *Bridge) FromAnthropicWithPlan(response anthropic.MessageResponse, model string, plan cache.CacheCreationPlan) openai.Response {
 	return bridge.FromAnthropicWithPlanAndContext(response, model, plan, ConversionContext{}, nil)
 }
@@ -250,13 +264,17 @@ func (bridge *Bridge) FromAnthropicWithPlan(response anthropic.MessageResponse, 
 func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.MessageResponse, model string, plan cache.CacheCreationPlan, context ConversionContext, sess *session.Session) openai.Response {
 	log := logger.L().With("model", model)
 	log.Debug("converting Anthropic response to OpenAI", "provider_id", response.ID, "stop_reason", response.StopReason)
-	if plan.LocalKey != "" {
-		bridge.registry.UpdateFromUsage(plan.LocalKey, cache.UsageSignals{
+	registryKey := plan.PrefixKey
+	if registryKey == "" {
+		registryKey = plan.LocalKey
+	}
+	if registryKey != "" {
+		bridge.registry.UpdateFromUsage(registryKey, cache.UsageSignals{
 			InputTokens:              response.Usage.InputTokens,
 			CacheCreationInputTokens: response.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     response.Usage.CacheReadInputTokens,
-		}, response.Usage.InputTokens)
-		log.Debug("updated cache registry", "key", plan.LocalKey, "input_tokens", response.Usage.InputTokens, "cache_creation", response.Usage.CacheCreationInputTokens, "cache_read", response.Usage.CacheReadInputTokens)
+		}, response.Usage.InputTokens, parseTTL(plan.TTL))
+		log.Debug("updated cache registry", "key", registryKey, "input_tokens", response.Usage.InputTokens, "cache_creation", response.Usage.CacheCreationInputTokens, "cache_read", response.Usage.CacheReadInputTokens)
 	}
 	if sess != nil && sess.DeepSeek != nil && bridge.cfg.DeepSeekV4Enabled() {
 		sess.DeepSeek.RememberFromContent(response.Content)

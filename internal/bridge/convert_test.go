@@ -22,6 +22,7 @@ func testBridge() *bridge.Bridge {
 			ExplicitCacheBreakpoints: true,
 			MaxBreakpoints:           4,
 			MinCacheTokens:           1,
+			MinBreakpointTokens:      1,
 		},
 	})
 }
@@ -42,6 +43,7 @@ func testBridgeWithWebSearchDisabled() *bridge.Bridge {
 			ExplicitCacheBreakpoints: true,
 			MaxBreakpoints:           4,
 			MinCacheTokens:           1,
+			MinBreakpointTokens:      1,
 		},
 	}
 	return testBridgeWithConfig(cfg)
@@ -111,6 +113,7 @@ func TestToAnthropicAutomaticCacheAddsExplicitBreakpoints(t *testing.T) {
 			ExplicitCacheBreakpoints: true,
 			MaxBreakpoints:           4,
 			MinCacheTokens:           1,
+			MinBreakpointTokens:      1,
 		},
 	}, cache.NewMemoryRegistry())
 
@@ -149,6 +152,7 @@ func TestToAnthropicCanDisableTopLevelAutomaticCache(t *testing.T) {
 			ExplicitCacheBreakpoints: true,
 			MaxBreakpoints:           4,
 			MinCacheTokens:           1,
+			MinBreakpointTokens:      1,
 		},
 	}, cache.NewMemoryRegistry())
 

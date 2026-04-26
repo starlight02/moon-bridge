@@ -2,6 +2,7 @@ package cache_test
 
 import (
 	"testing"
+	"time"
 
 	"moonbridge/internal/cache"
 )
@@ -52,6 +53,8 @@ func TestPlannerCreatesExplicitBreakpointsInPrefixOrder(t *testing.T) {
 		SystemBlockCount:  1,
 		MessageCount:      3,
 		EstimatedTokens:   1000,
+		EstimatedToolTokens:   2000,
+		EstimatedSystemTokens: 1500,
 	})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
@@ -71,6 +74,12 @@ func TestPlannerCreatesExplicitBreakpointsInPrefixOrder(t *testing.T) {
 	}
 	if plan.LocalKey == "" {
 		t.Fatal("LocalKey is empty")
+	}
+	if plan.PrefixKey == "" {
+		t.Fatal("PrefixKey is empty")
+	}
+	if plan.PrefixKey == plan.LocalKey {
+		t.Fatal("PrefixKey should differ from LocalKey when MessagePrefixHash is set")
 	}
 }
 
@@ -95,6 +104,8 @@ func TestPlannerAutomaticWithExplicitBreakpointsBecomesHybrid(t *testing.T) {
 		SystemBlockCount:  2,
 		MessageCount:      3,
 		EstimatedTokens:   1000,
+		EstimatedToolTokens:   2000,
+		EstimatedSystemTokens: 1500,
 	})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
@@ -127,6 +138,7 @@ func TestPlannerAutomaticCanDisableTopLevelCache(t *testing.T) {
 		SystemBlockCount:  1,
 		MessageCount:      1,
 		EstimatedTokens:   1000,
+		EstimatedSystemTokens: 2000,
 	})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
@@ -160,6 +172,8 @@ func TestPlannerUsesRemainingBudgetForMessagePrefixes(t *testing.T) {
 		SystemBlockCount:  1,
 		MessageCount:      6,
 		EstimatedTokens:   5000,
+		EstimatedToolTokens:   2000,
+		EstimatedSystemTokens: 1500,
 		MessageBreakpoints: []cache.MessageBreakpointCandidate{
 			{MessageIndex: 1, ContentIndex: 0, BlockPath: "messages[1].content[last]", Role: "user"},
 			{MessageIndex: 3, ContentIndex: 0, BlockPath: "messages[3].content[last]", Role: "user"},
@@ -259,5 +273,58 @@ func TestRegistryUpdatesFromUsageSignals(t *testing.T) {
 	entry, ok = registry.Get("short")
 	if !ok || entry.State != cache.StateNotCacheable {
 		t.Fatalf("short entry = %+v, ok=%v", entry, ok)
+	}
+}
+
+func TestRegistryTTLPassthrough(t *testing.T) {
+	registry := cache.NewMemoryRegistry()
+
+	registry.UpdateFromUsage("key-1h", cache.UsageSignals{CacheCreationInputTokens: 500}, 500, time.Hour)
+	entry, ok := registry.Get("key-1h")
+	if !ok || entry.State != cache.StateWarm {
+		t.Fatalf("entry = %+v, ok=%v", entry, ok)
+	}
+	// ExpiresAt should be ~1h from now, not 5m
+	if time.Until(entry.ExpiresAt) < 50*time.Minute {
+		t.Fatalf("ExpiresAt too soon: %v", entry.ExpiresAt)
+	}
+}
+
+func TestBreakpointSkipsLowTokenScope(t *testing.T) {
+	planner := cache.NewPlanner(cache.PlannerConfig{
+		Mode:                     "explicit",
+		TTL:                      "5m",
+		PromptCaching:            true,
+		ExplicitCacheBreakpoints: true,
+		MaxBreakpoints:           4,
+		MinCacheTokens:           1,
+	})
+
+	plan, err := planner.Plan(cache.PlanInput{
+		ProviderID:             "anthropic",
+		Model:                  "claude-test",
+		ToolsHash:              "tools-hash",
+		SystemHash:             "system-hash",
+		MessagePrefixHash:      "messages-hash",
+		ToolCount:              1,
+		SystemBlockCount:       1,
+		MessageCount:           2,
+		EstimatedTokens:        3000,
+		EstimatedToolTokens:    50,  // below 1024 minimum
+		EstimatedSystemTokens:  50,  // below 1024 minimum (combined also < 1024)
+		MessageBreakpoints: []cache.MessageBreakpointCandidate{
+			{MessageIndex: 0, ContentIndex: 0, BlockPath: "messages[0].content[last]", Role: "user"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+
+	// Tools and system should be skipped; only message breakpoint should remain
+	if len(plan.Breakpoints) != 1 {
+		t.Fatalf("expected 1 breakpoint (messages only), got %+v", plan.Breakpoints)
+	}
+	if plan.Breakpoints[0].Scope != "messages" {
+		t.Fatalf("expected messages scope, got %q", plan.Breakpoints[0].Scope)
 	}
 }

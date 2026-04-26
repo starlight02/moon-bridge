@@ -1,9 +1,11 @@
 package bridge
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/openai"
@@ -37,10 +39,60 @@ func normalizeUsage(usage anthropic.Usage) openai.Usage {
 
 func estimateTokens(request anthropic.MessageRequest) int {
 	data, _ := json.Marshal(request)
-	if len(data) == 0 {
+	n := len(data)
+	if n == 0 {
 		return 0
 	}
-	return len(data)/4 + 1
+	// Detect base64 content ratio. Base64 encodes ~6-8 chars per token
+	// vs ~4 chars per token for normal text/JSON.
+	b64Bytes := countBase64Bytes(data)
+	textBytes := n - b64Bytes
+	return textBytes/4 + b64Bytes/7 + 1
+}
+
+// countBase64Bytes estimates the number of bytes in JSON data that are base64-encoded
+// image payloads. It looks for "data" fields following "media_type" (Anthropic image format).
+
+// estimatePartTokens estimates token count for any JSON-serializable slice.
+func estimatePartTokens(part any) int {
+	data, _ := json.Marshal(part)
+	n := len(data)
+	if n == 0 {
+		return 0
+	}
+	b64Bytes := countBase64Bytes(data)
+	textBytes := n - b64Bytes
+	return textBytes/4 + b64Bytes/7 + 1
+}
+
+func countBase64Bytes(data []byte) int {
+	total := 0
+	// Anthropic image blocks: {"type":"base64","media_type":"...","data":"<base64>"}
+	// Scan for '"data":"' preceded by '"media_type"' within a reasonable window.
+	marker := []byte(`"data":"`)
+	for offset := 0; offset < len(data); {
+		idx := bytes.Index(data[offset:], marker)
+		if idx < 0 {
+			break
+		}
+		pos := offset + idx
+		// Check if "media_type" appears within 200 bytes before this "data" field
+		windowStart := pos - 200
+		if windowStart < 0 {
+			windowStart = 0
+		}
+		if bytes.Contains(data[windowStart:pos], []byte(`"media_type"`)) {
+			valueStart := pos + len(marker)
+			valueEnd := bytes.IndexByte(data[valueStart:], '"')
+			if valueEnd > 0 {
+				total += valueEnd
+				offset = valueStart + valueEnd + 1
+				continue
+			}
+		}
+		offset = pos + len(marker)
+	}
+	return total
 }
 
 func responseID(providerID string) string {
@@ -163,4 +215,11 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// parseTTL converts a TTL string (e.g. "5m", "1h") to time.Duration.
+// Returns 0 on parse failure, letting callers fall back to their default.
+func parseTTL(ttl string) time.Duration {
+	d, _ := time.ParseDuration(ttl)
+	return d
 }
