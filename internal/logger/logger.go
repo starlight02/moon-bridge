@@ -9,8 +9,10 @@ import (
 )
 
 var defaultLogger *slog.Logger
+var defaultOutput io.Writer
 
 func init() {
+	defaultOutput = os.Stderr
 	defaultLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -58,6 +60,7 @@ func Init(cfg Config) error {
 	if cfg.Output == nil {
 		cfg.Output = os.Stderr
 	}
+	defaultOutput = cfg.Output
 	opts := &slog.HandlerOptions{Level: lvl}
 	var handler slog.Handler
 	switch strings.ToLower(strings.TrimSpace(cfg.Format)) {
@@ -73,6 +76,11 @@ func Init(cfg Config) error {
 // L returns the default logger.
 func L() *slog.Logger {
 	return defaultLogger
+}
+
+// Output returns the writer used by the default logger.
+func Output() io.Writer {
+	return defaultOutput
 }
 
 // Debug logs a debug message.

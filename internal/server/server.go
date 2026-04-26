@@ -175,12 +175,14 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	anthropicResponse, err := effectiveProvider.CreateMessage(request.Context(), anthropicRequest)
 	if err != nil {
 		status, payload := server.bridge.ErrorResponse(err)
-		log.Error(stats.FormatErrorLine(stats.ErrorLineParams{
+		errLine := stats.FormatErrorLine(stats.ErrorLineParams{
 			RequestModel: responsesRequest.Model,
 			ActualModel:  anthropicRequest.Model,
 			StatusCode:   status,
 			Message:      payload.Error.Message,
-		}))
+		})
+		fmt.Fprintln(logger.Output(), errLine)
+		log.Error("provider request failed", "status", status)
 		record.Error = traceError("provider_create_message", err)
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
@@ -211,12 +213,14 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 	stream, err := provider.StreamMessage(request.Context(), anthropicRequest)
 	if err != nil {
 		status, payload := server.bridge.ErrorResponse(err)
-		log.Error(stats.FormatErrorLine(stats.ErrorLineParams{
+		errLine := stats.FormatErrorLine(stats.ErrorLineParams{
 			RequestModel: responsesRequest.Model,
 			ActualModel:  anthropicRequest.Model,
 			StatusCode:   status,
 			Message:      payload.Error.Message,
-		}))
+		})
+		fmt.Fprintln(logger.Output(), errLine)
+		log.Error("provider stream failed", "status", status)
 		record.Error = traceError("provider_stream_message", err)
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
@@ -479,12 +483,14 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 	}
 	upstreamResp, err := client.Do(upstreamReq)
 	if err != nil {
-		log.Error(stats.FormatErrorLine(stats.ErrorLineParams{
+		errLine := stats.FormatErrorLine(stats.ErrorLineParams{
 			RequestModel: responsesRequest.Model,
 			ActualModel:  upstreamRequest.Model,
 			StatusCode:   http.StatusBadGateway,
 			Message:      err.Error(),
-		}))
+		})
+		fmt.Fprintln(logger.Output(), errLine)
+		log.Error("openai upstream failed", "status", http.StatusBadGateway)
 		record.Error = map[string]string{"stage": "openai_upstream", "message": err.Error()}
 		server.writeTrace(record)
 		writeOpenAIError(writer, http.StatusBadGateway, openai.ErrorResponse{Error: openai.ErrorObject{
@@ -527,7 +533,7 @@ func logUsageLine(requestModel, actualModel string, usage stats.Usage, sessionSt
 		hitRate = sessionStats.CacheHitRate()
 		writeRate = sessionStats.CacheWriteRate()
 	}
-	logger.Info(stats.FormatUsageLine(stats.UsageLineParams{
+	fmt.Fprintln(logger.Output(), stats.FormatUsageLine(stats.UsageLineParams{
 		RequestModel:   requestModel,
 		ActualModel:    actualModel,
 		Usage:          usage,
