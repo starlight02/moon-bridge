@@ -423,23 +423,23 @@ func perRequestDeepSeek(sess *session.Session, deepseekV4Enabled bool) *deepseek
 }
 
 type inputItem struct {
-	Type      string             `json:"type"`
-	ID        string             `json:"id"`
-	Role      string             `json:"role"`
-	Phase     string             `json:"phase"`
-	Content   json.RawMessage    `json:"content"`
-	CallID    string             `json:"call_id"`
-	Name      string             `json:"name"`
-	Namespace string             `json:"namespace"`
-	Arguments string             `json:"arguments"`
-	Input     string             `json:"input"`
-	Action    *openai.ToolAction `json:"action"`
+	Type      string                        `json:"type"`
+	ID        string                        `json:"id"`
+	Role      string                        `json:"role"`
+	Phase     string                        `json:"phase"`
+	Content   json.RawMessage               `json:"content"`
+	CallID    string                        `json:"call_id"`
+	Name      string                        `json:"name"`
+	Namespace string                        `json:"namespace"`
+	Arguments string                        `json:"arguments"`
+	Input     string                        `json:"input"`
+	Action    *openai.ToolAction            `json:"action"`
 	Summary   []openai.ReasoningItemSummary `json:"summary,omitempty"`
-	Output    string             `json:"output"`
+	Output    string                        `json:"output"`
 }
 
 // toolInputFromArguments recovers histories poisoned by concatenated tool
-// argument objects while leaving ordinary invalid JSON on the existing path.
+// argument objects and replaces other malformed JSON with a valid sentinel.
 func toolInputFromArguments(arguments string) json.RawMessage {
 	trimmed := strings.TrimSpace(arguments)
 	if trimmed == "" {
@@ -451,7 +451,7 @@ func toolInputFromArguments(arguments string) json.RawMessage {
 	if recovered, ok := lastConcatenatedJSONValue(trimmed); ok {
 		return recovered
 	}
-	return json.RawMessage(trimmed)
+	return json.RawMessage(`{"invalid_argument":true}`)
 }
 
 func lastConcatenatedJSONValue(value string) (json.RawMessage, bool) {
@@ -562,7 +562,6 @@ func parseStopSequences(raw json.RawMessage) []string {
 	}
 	return nil
 }
-
 
 // prependThinkingBlock adds a thinking block to the last assistant message,
 // or creates a new assistant message if none exists.

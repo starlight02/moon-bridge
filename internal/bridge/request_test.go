@@ -295,6 +295,34 @@ func TestToAnthropicRecoversConcatenatedFunctionCallArgumentsFromHistory(t *test
 	}
 }
 
+func TestToAnthropicSanitizesMalformedFunctionCallArgumentsFromHistory(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`[
+			{"type":"function_call","call_id":"tool_colon","name":"shell","arguments":"{\"command\":[\"powershell.exe\",\"-NoProfile\",\"-Command\":\"bad\"]}"},
+			{"type":"function_call","call_id":"tool_brace","name":"shell","arguments":"{\"command\":[\"powershell.exe\",\"-NoProfile\",\"-Command\",\"bad\"}]}"},
+			{"type":"function_call","call_id":"tool_at","name":"shell","arguments":"{\"command\":[\"powershell.exe\",\"-NoProfile\",\"-Command\",@\"bad\"]}"}
+		]`),
+	}
+
+	converted, _, err := testBridge().ToAnthropic(request, nil)
+	if err != nil {
+		t.Fatalf("ToAnthropic(, nil) error = %v", err)
+	}
+	if _, err := json.Marshal(converted); err != nil {
+		t.Fatalf("Marshal converted request error = %v", err)
+	}
+	assistant := converted.Messages[0]
+	if assistant.Role != "assistant" || len(assistant.Content) != 3 {
+		t.Fatalf("assistant history = %+v", assistant)
+	}
+	for _, block := range assistant.Content {
+		if string(block.Input) != `{"invalid_argument":true}` {
+			t.Fatalf("tool input = %s, want invalid sentinel", block.Input)
+		}
+	}
+}
+
 func TestToAnthropicSkipsCommentaryPhaseMessages(t *testing.T) {
 	request := openai.ResponsesRequest{
 		Model: "gpt-test",
