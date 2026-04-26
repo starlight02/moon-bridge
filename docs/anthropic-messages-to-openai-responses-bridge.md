@@ -61,6 +61,7 @@ provider:
       base_url: "https://api.deepseek.com"
       api_key: "${DEEPSEEK_API_KEY}"
       version: "2023-06-01"
+      deepseek_v4: true
       models:
         deepseek-v4-pro:
           context_window: 1000000
@@ -156,7 +157,7 @@ Web search 支持按 Provider 独立配置和判断。每个 Provider 可在 `pr
 
 ### DeepSeek V4 扩展
 
-当 `provider.deepseek_v4: true` 时，桥接器启用 DeepSeek thinking 状态扩展：
+当当前模型路由到的 Provider 配置 `deepseek_v4: true` 时，桥接器启用 DeepSeek thinking 状态扩展：
 
 - 处理 `reasoning_content` 剥离和 `reasoning_effort` → thinking 映射。
 - 流式 thinking delta 收集和 signature-only thinking block 保留。

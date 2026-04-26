@@ -49,6 +49,7 @@ provider:
       base_url: "https://api.deepseek.com"
       api_key: "${DEEPSEEK_API_KEY}"
       version: "2023-06-01"
+      deepseek_v4: true
       models:
         deepseek-v4-pro:
           context_window: 200000
@@ -125,6 +126,7 @@ provider:
     deepseek:
       base_url: "https://api.deepseek.com"
       api_key: "${DEEPSEEK_API_KEY}"
+      deepseek_v4: true
       web_search:
         support: "disabled" # DeepSeek 不支持 Anthropic server tool
 
@@ -136,7 +138,7 @@ provider:
 
 ### DeepSeek V4 扩展
 
-在 `config.yml` 中设置 `provider.deepseek_v4: true` 可启用 DeepSeek V4 专用兼容逻辑，包括 reasoning_content 剥离与重注入、reasoning_effort → thinking 映射、推理输出展示等。详见 [docs/deepseek-v4.md](docs/deepseek-v4.md)。
+在具体 Provider 下设置 `deepseek_v4: true` 可启用 DeepSeek V4 专用兼容逻辑，包括 reasoning_content 剥离与重注入、reasoning_effort → thinking 映射、推理输出展示等。该开关按路由后的 provider 生效，因此同一进程中可以同时路由 DeepSeek、Anthropic 和 OpenAI provider。详见 [docs/deepseek-v4.md](docs/deepseek-v4.md)。
 
 ### 调试抓包
 

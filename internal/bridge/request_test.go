@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"moonbridge/internal/bridge"
+	"moonbridge/internal/cache"
+	"moonbridge/internal/config"
 	"moonbridge/internal/openai"
 )
 
@@ -216,6 +219,49 @@ func TestToAnthropicConvertsCodexNamespaceFunctionHistoryAndToolChoice(t *testin
 	}
 	if converted.ToolChoice.Name != "mcp__deepwiki__read_wiki_structure" {
 		t.Fatalf("tool choice = %+v", converted.ToolChoice)
+	}
+}
+
+func TestToAnthropicAppliesDeepSeekV4OnlyForRoutedProvider(t *testing.T) {
+	bridgeUnderTest := bridge.New(config.Config{
+		DefaultMaxTokens: 1024,
+		Routes: map[string]config.RouteEntry{
+			"deep":   {Provider: "deepseek", Model: "deepseek-v4-pro"},
+			"claude": {Provider: "anthropic", Model: "claude-test"},
+		},
+		ProviderDefs: map[string]config.ProviderDef{
+			"deepseek":  {DeepSeekV4: true},
+			"anthropic": {},
+		},
+		Cache: config.CacheConfig{Mode: "off"},
+	}, cache.NewMemoryRegistry())
+	temperature := 0.2
+	topP := 0.9
+	base := openai.ResponsesRequest{
+		Input:       json.RawMessage(`"hello"`),
+		Temperature: &temperature,
+		TopP:        &topP,
+		Reasoning:   map[string]any{"effort": "high"},
+	}
+
+	deepRequest := base
+	deepRequest.Model = "deep"
+	deepConverted, _, err := bridgeUnderTest.ToAnthropic(deepRequest, nil)
+	if err != nil {
+		t.Fatalf("ToAnthropic(deep) error = %v", err)
+	}
+	if deepConverted.Temperature != nil || deepConverted.TopP != nil || deepConverted.Thinking == nil {
+		t.Fatalf("deep request = %+v", deepConverted)
+	}
+
+	claudeRequest := base
+	claudeRequest.Model = "claude"
+	claudeConverted, _, err := bridgeUnderTest.ToAnthropic(claudeRequest, nil)
+	if err != nil {
+		t.Fatalf("ToAnthropic(claude) error = %v", err)
+	}
+	if claudeConverted.Temperature == nil || claudeConverted.TopP == nil || claudeConverted.Thinking != nil {
+		t.Fatalf("claude request = %+v", claudeConverted)
 	}
 }
 

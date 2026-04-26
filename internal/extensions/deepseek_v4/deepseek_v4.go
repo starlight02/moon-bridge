@@ -8,11 +8,6 @@ import (
 	"moonbridge/internal/openai"
 )
 
-// IsEnabled returns whether the DeepSeek V4 extension should be active.
-func IsEnabled(cfg interface{ DeepSeekV4Enabled() bool }) bool {
-	return cfg.DeepSeekV4Enabled()
-}
-
 // StripReasoningContent removes the reasoning_content field from message
 // content before sending it back as input in multi-round conversations.
 // DeepSeek returns 400 if reasoning_content appears in the input messages.

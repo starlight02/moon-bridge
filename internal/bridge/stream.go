@@ -30,6 +30,7 @@ func (bridge *Bridge) ConvertStreamEvents(events []anthropic.StreamEvent, model 
 }
 
 func (bridge *Bridge) ConvertStreamEventsWithContext(events []anthropic.StreamEvent, model string, context ConversionContext, sess *session.Session, opts StreamOptions) []openai.StreamEvent {
+	deepseekV4Enabled := bridge.cfg.DeepSeekV4ForModel(model)
 	converter := streamConverter{
 		bridge:                  bridge,
 		model:                   model,
@@ -45,7 +46,7 @@ func (bridge *Bridge) ConvertStreamEventsWithContext(events []anthropic.StreamEv
 		outputIndexes:           map[int]int{},
 		opts:                    opts,
 	}
-	if bridge.cfg.DeepSeekV4Enabled() && sess != nil && sess.DeepSeek != nil {
+	if deepseekV4Enabled && sess != nil && sess.DeepSeek != nil {
 		converter.deepseek = deepseekv4.NewStreamState()
 	}
 	var converted []openai.StreamEvent
@@ -54,7 +55,7 @@ func (bridge *Bridge) ConvertStreamEventsWithContext(events []anthropic.StreamEv
 	}
 
 	// After stream completes, feed the result back to the session's DeepSeek state.
-	if converter.deepseek != nil && sess != nil && sess.DeepSeek != nil && bridge.cfg.DeepSeekV4Enabled() {
+	if converter.deepseek != nil && sess != nil && sess.DeepSeek != nil && deepseekV4Enabled {
 		sess.DeepSeek.RememberStreamResult(converter.deepseek, converter.response.OutputText)
 	}
 

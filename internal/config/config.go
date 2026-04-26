@@ -53,7 +53,6 @@ type Config struct {
 	Cache          CacheConfig
 	ResponseProxy  ResponseProxyConfig
 	AnthropicProxy AnthropicProxyConfig
-	DeepSeekV4     bool
 }
 
 // RouteEntry is a resolved route: alias -> provider key + upstream model name + metadata.
@@ -75,6 +74,7 @@ type ProviderDef struct {
 	Version          string
 	UserAgent        string
 	Protocol         string // "anthropic" (default) or "openai"
+	DeepSeekV4       bool
 	WebSearchSupport WebSearchSupport
 	WebSearchMaxUses int
 	TavilyAPIKey     string
@@ -159,6 +159,9 @@ func (cfg Config) validateTransform() error {
 			case "", "anthropic", "openai":
 			default:
 				return fmt.Errorf("providers.%s.protocol must be \"anthropic\" or \"openai\"", key)
+			}
+			if def.DeepSeekV4 && def.Protocol == "openai" {
+				return fmt.Errorf("providers.%s.deepseek_v4 requires anthropic protocol", key)
 			}
 		}
 		for alias, route := range cfg.Routes {
@@ -399,8 +402,21 @@ func boolOrDefault(value *bool, fallback bool) bool {
 	return *value
 }
 
-func (cfg Config) DeepSeekV4Enabled() bool {
-	return cfg.DeepSeekV4
+func (cfg Config) DeepSeekV4ForProvider(providerKey string) bool {
+	if def, ok := cfg.ProviderDefs[providerKey]; ok {
+		return def.DeepSeekV4
+	}
+	return false
+}
+
+func (cfg Config) DeepSeekV4ForModel(modelAlias string) bool {
+	if route, ok := cfg.Routes[modelAlias]; ok && route.Provider != "" {
+		return cfg.DeepSeekV4ForProvider(route.Provider)
+	}
+	if _, ok := cfg.ProviderDefs["default"]; ok {
+		return cfg.DeepSeekV4ForProvider("default")
+	}
+	return false
 }
 
 // ProviderFor returns the provider key that serves the given model alias.

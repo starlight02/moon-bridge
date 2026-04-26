@@ -18,6 +18,7 @@ provider:
       api_key: "${DEEPSEEK_API_KEY}"
       version: "2023-06-01"
       user_agent: "moonbridge/1.0"
+      deepseek_v4: true
       web_search:
         support: "disabled"
       models:
@@ -58,7 +59,6 @@ provider:
   #   search_max_rounds: 5
   default_max_tokens: 65536
   default_model: "moonbridge"
-  deepseek_v4: true
 
 cache:
   mode: "explicit"  # off / automatic / explicit / hybrid

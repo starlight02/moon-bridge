@@ -145,7 +145,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	record.AnthropicRequest = anthropicRequest
 	if err != nil {
 		log.Warn("failed to convert to anthropic", "error", err)
-		status, payload := server.bridge.ErrorResponse(err)
+		status, payload := server.bridge.ErrorResponseForModel(responsesRequest.Model, err)
 		record.Error = traceError("convert_to_anthropic", err)
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
@@ -174,7 +174,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	log.Debug("sending non-streaming request to provider", "model", anthropicRequest.Model)
 	anthropicResponse, err := effectiveProvider.CreateMessage(request.Context(), anthropicRequest)
 	if err != nil {
-		status, payload := server.bridge.ErrorResponse(err)
+		status, payload := server.bridge.ErrorResponseForModel(responsesRequest.Model, err)
 		errLine := stats.FormatErrorLine(stats.ErrorLineParams{
 			RequestModel: responsesRequest.Model,
 			ActualModel:  anthropicRequest.Model,
@@ -212,7 +212,7 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 	log.Debug("starting stream")
 	stream, err := provider.StreamMessage(request.Context(), anthropicRequest)
 	if err != nil {
-		status, payload := server.bridge.ErrorResponse(err)
+		status, payload := server.bridge.ErrorResponseForModel(responsesRequest.Model, err)
 		errLine := stats.FormatErrorLine(stats.ErrorLineParams{
 			RequestModel: responsesRequest.Model,
 			ActualModel:  anthropicRequest.Model,

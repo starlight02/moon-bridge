@@ -81,7 +81,7 @@ func TestResponsesHandlerReturnsOpenAIResponse(t *testing.T) {
 	handler := server.New(server.Config{
 		Bridge: bridge.New(config.Config{
 			DefaultMaxTokens: 1024,
-			Routes: map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
+			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
 			Cache:            config.CacheConfig{Mode: "off"},
 		}, cache.NewMemoryRegistry()),
 		Provider: provider,
@@ -118,7 +118,7 @@ func TestResponsesHandlerWritesTraceFile(t *testing.T) {
 	handler := server.New(server.Config{
 		Bridge: bridge.New(config.Config{
 			DefaultMaxTokens: 1024,
-			Routes: map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
+			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
 			Cache:            config.CacheConfig{Mode: "off"},
 		}, cache.NewMemoryRegistry()),
 		Provider: provider,
@@ -188,7 +188,7 @@ func TestResponsesHandlerAcceptsCodexResponsesPath(t *testing.T) {
 	handler := server.New(server.Config{
 		Bridge: bridge.New(config.Config{
 			DefaultMaxTokens: 1024,
-			Routes: map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
+			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
 			Cache:            config.CacheConfig{Mode: "off"},
 		}, cache.NewMemoryRegistry()),
 		Provider: provider,
@@ -281,9 +281,9 @@ func TestResponsesHandlerReusesCodexSessionForDeepSeekThinking(t *testing.T) {
 	}
 	handler := server.New(server.Config{
 		Bridge: bridge.New(config.Config{
-			DeepSeekV4:       true,
 			DefaultMaxTokens: 1024,
-			Routes: map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro"}},
+			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro"}},
+			ProviderDefs:     map[string]config.ProviderDef{"default": {DeepSeekV4: true}},
 			Cache:            config.CacheConfig{Mode: "off"},
 		}, cache.NewMemoryRegistry()),
 		Provider: provider,

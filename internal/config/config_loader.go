@@ -35,7 +35,6 @@ type ProviderFileConfig struct {
 	DefaultModel     string                           `yaml:"default_model"`
 	Providers        map[string]ProviderDefFileConfig `yaml:"providers"`
 	Routes           map[string]string                `yaml:"routes"`
-	DeepSeekV4       bool                             `yaml:"deepseek_v4"`
 }
 
 type CacheFileConfig struct {
@@ -61,13 +60,14 @@ type ProviderModelFileConfig struct {
 }
 
 type ProviderDefFileConfig struct {
-	BaseURL   string                             `yaml:"base_url"`
-	APIKey    string                             `yaml:"api_key"`
-	Version   string                             `yaml:"version"`
-	UserAgent string                             `yaml:"user_agent"`
-	Protocol  string                             `yaml:"protocol"`
-	WebSearch WebSearchFileConfig                `yaml:"web_search"`
-	Models    map[string]ProviderModelFileConfig `yaml:"models"`
+	BaseURL    string                             `yaml:"base_url"`
+	APIKey     string                             `yaml:"api_key"`
+	Version    string                             `yaml:"version"`
+	UserAgent  string                             `yaml:"user_agent"`
+	Protocol   string                             `yaml:"protocol"`
+	DeepSeekV4 bool                               `yaml:"deepseek_v4"`
+	WebSearch  WebSearchFileConfig                `yaml:"web_search"`
+	Models     map[string]ProviderModelFileConfig `yaml:"models"`
 }
 
 type ModelPricingFileConfig struct {
@@ -175,7 +175,6 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 		ProviderDefs:      providerDefs,
 		Cache:             fromCacheFileConfig(fileConfig.Cache),
 		ResponseProxy:     FromResponseProxyFileConfig(fileConfig.Developer.Proxy.Response),
-		DeepSeekV4:        fileConfig.Provider.DeepSeekV4,
 		AnthropicProxy:    FromAnthropicProxyFileConfig(fileConfig.Developer.Proxy.Anthropic),
 	}
 
@@ -313,6 +312,7 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 			Version:          strings.TrimSpace(def.Version),
 			UserAgent:        strings.TrimSpace(def.UserAgent),
 			Protocol:         strings.TrimSpace(def.Protocol),
+			DeepSeekV4:       def.DeepSeekV4,
 			WebSearchSupport: wsSupport,
 			WebSearchMaxUses: def.WebSearch.MaxUses,
 			TavilyAPIKey:     strings.TrimSpace(def.WebSearch.TavilyAPIKey),

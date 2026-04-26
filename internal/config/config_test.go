@@ -117,6 +117,7 @@ provider:
     deepseek:
       base_url: https://deepseek.example.test
       api_key: deepseek-key
+      deepseek_v4: true
       models:
         deepseek-v4-pro: {}
     openai:
@@ -134,6 +135,12 @@ provider:
 	}
 	if cfg.ProviderDefs["openai"].Protocol != "openai" {
 		t.Fatalf("openai provider = %+v", cfg.ProviderDefs["openai"])
+	}
+	if !cfg.DeepSeekV4ForModel("moonbridge") {
+		t.Fatalf("DeepSeekV4ForModel(moonbridge) = false, want true")
+	}
+	if cfg.DeepSeekV4ForModel("image") {
+		t.Fatalf("DeepSeekV4ForModel(image) = true, want false")
 	}
 	if got := cfg.ModelFor("image"); got != "gpt-image-1.5" {
 		t.Fatalf("ModelFor(image) = %q", got)
@@ -177,6 +184,33 @@ provider:
       protocol: openai
   routes:
     image: "openai/"
+`,
+		"deepseek extension on openai protocol": `
+mode: Transform
+provider:
+  providers:
+    openai:
+      base_url: https://openai.example.test
+      api_key: openai-key
+      protocol: openai
+      deepseek_v4: true
+      models:
+        gpt-image-1.5: {}
+  routes:
+    image: "openai/gpt-image-1.5"
+`,
+		"global deepseek extension removed": `
+mode: Transform
+provider:
+  providers:
+    deepseek:
+      base_url: https://deepseek.example.test
+      api_key: deepseek-key
+      models:
+        deepseek-v4-pro: {}
+  routes:
+    moonbridge: "deepseek/deepseek-v4-pro"
+  deepseek_v4: true
 `,
 	} {
 		t.Run(name, func(t *testing.T) {

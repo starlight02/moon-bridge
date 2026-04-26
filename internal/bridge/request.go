@@ -16,11 +16,11 @@ import (
 	"moonbridge/internal/session"
 )
 
-func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContext, sess *session.Session) ([]anthropic.Message, []anthropic.ContentBlock, error) {
+func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContext, sess *session.Session, deepseekV4Enabled bool) ([]anthropic.Message, []anthropic.ContentBlock, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil, nil
 	}
-	if bridge.cfg.DeepSeekV4Enabled() {
+	if deepseekV4Enabled {
 		raw = deepseekv4.StripReasoningContent(raw)
 	}
 	trimmed := strings.TrimSpace(string(raw))
@@ -41,7 +41,7 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 	}
 
 	// Get the per-request DeepSeek state from the session.
-	ds := perRequestDeepSeek(sess, bridge.cfg.DeepSeekV4Enabled())
+	ds := perRequestDeepSeek(sess, deepseekV4Enabled)
 
 	messages := make([]anthropic.Message, 0, len(items))
 	system := make([]anthropic.ContentBlock, 0)
@@ -293,18 +293,18 @@ func (bridge *Bridge) planCache(request openai.ResponsesRequest, converted anthr
 		MinBreakpointTokens:      cfg.MinBreakpointTokens,
 	}, bridge.registry)
 	return planner.Plan(cache.PlanInput{
-		ProviderID:         "anthropic",
-		UpstreamAPIKeyID:   "configured-provider-key",
-		Model:              converted.Model,
-		PromptCacheKey:     request.PromptCacheKey,
-		ToolsHash:          toolsHash,
-		SystemHash:         systemHash,
-		MessagePrefixHash:  messagesHash,
-		MessageBreakpoints: cacheMessageBreakpointCandidates(converted.Messages),
-		ToolCount:          len(converted.Tools),
-		SystemBlockCount:   len(converted.System),
-		MessageCount:       len(converted.Messages),
-		EstimatedTokens:    estimateTokens(converted),
+		ProviderID:            "anthropic",
+		UpstreamAPIKeyID:      "configured-provider-key",
+		Model:                 converted.Model,
+		PromptCacheKey:        request.PromptCacheKey,
+		ToolsHash:             toolsHash,
+		SystemHash:            systemHash,
+		MessagePrefixHash:     messagesHash,
+		MessageBreakpoints:    cacheMessageBreakpointCandidates(converted.Messages),
+		ToolCount:             len(converted.Tools),
+		SystemBlockCount:      len(converted.System),
+		MessageCount:          len(converted.Messages),
+		EstimatedTokens:       estimateTokens(converted),
 		EstimatedToolTokens:   estimatePartTokens(converted.Tools),
 		EstimatedSystemTokens: estimatePartTokens(converted.System),
 	})
