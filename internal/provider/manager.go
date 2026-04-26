@@ -23,6 +23,7 @@ type ProviderConfig struct {
 	APIKey    string     `yaml:"api_key"`
 	Version   string     `yaml:"version"`
 	UserAgent string     `yaml:"user_agent"`
+	Protocol  string // "anthropic" (default) or "openai"
 	HTTP      HTTPConfig `yaml:"http"`
 }
 
@@ -166,7 +167,6 @@ func newHTTPClient(cfg HTTPConfig) *http.Client {
 // BuildProviderConfigs converts legacy single-provider config and new multi-provider
 // config into a unified provider config map.
 // If new-style providers are present, they take precedence.
-// Otherwise a "default" provider is built from the legacy fields.
 func BuildProviderConfigs(
 	legacyBaseURL, legacyAPIKey, legacyVersion, legacyUserAgent string,
 	newProviders map[string]ProviderConfig,
@@ -235,4 +235,52 @@ func (pm *ProviderManager) ClientForKey(key string) (*anthropic.Client, error) {
 		return nil, fmt.Errorf("provider %q not found", key)
 	}
 	return client, nil
+}
+
+// ProtocolForKey returns the protocol for a given provider key.
+// Returns "anthropic" if not configured.
+func (pm *ProviderManager) ProtocolForKey(key string) string {
+	if pm.providers == nil {
+		return "anthropic"
+	}
+	cfg, ok := pm.providers[key]
+	if !ok {
+		return "anthropic"
+	}
+	if cfg.Protocol == "" {
+		return "anthropic"
+	}
+	return cfg.Protocol
+}
+
+// ProtocolForModel returns the protocol for the provider serving the given model alias.
+// Returns "anthropic" if the model is not explicitly routed.
+func (pm *ProviderManager) ProtocolForModel(modelAlias string) string {
+	route, ok := pm.routes[modelAlias]
+	if !ok {
+		return "anthropic"
+	}
+	providerKey := route.Provider
+	if providerKey == "" {
+		providerKey = pm.defaultK
+	}
+	return pm.ProtocolForKey(providerKey)
+}
+
+// ProviderBaseURL returns the base URL for a given provider key.
+func (pm *ProviderManager) ProviderBaseURL(key string) string {
+	cfg, ok := pm.providers[key]
+	if !ok {
+		return ""
+	}
+	return cfg.BaseURL
+}
+
+// ProviderAPIKey returns the API key for a given provider key.
+func (pm *ProviderManager) ProviderAPIKey(key string) string {
+	cfg, ok := pm.providers[key]
+	if !ok {
+		return ""
+	}
+	return cfg.APIKey
 }

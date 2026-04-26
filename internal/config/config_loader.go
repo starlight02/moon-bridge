@@ -64,6 +64,7 @@ type ProviderDefFileConfig struct {
 	APIKey    string `yaml:"api_key"`
 	Version   string `yaml:"version"`
 	UserAgent string `yaml:"user_agent"`
+	Protocol  string `yaml:"protocol"`
 }
 
 // ModelPricingFileConfig holds optional per-model pricing in RMB per M tokens.
@@ -284,6 +285,7 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 			APIKey:    strings.TrimSpace(def.APIKey),
 			Version:   strings.TrimSpace(def.Version),
 			UserAgent: strings.TrimSpace(def.UserAgent),
+			Protocol:   strings.TrimSpace(def.Protocol),
 		}
 	}
 	return defs

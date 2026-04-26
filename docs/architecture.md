@@ -233,3 +233,33 @@ flowchart LR
     ant --> bridge
     bridge -- SSE/JSON --> client
 ```
+
+### OpenAI 协议直通
+
+定义 Provider 时可指定 `protocol` 字段：
+
+- `"anthropic"`（默认）：请求经 Bridge 协议转换后以 Anthropic Messages 格式发送到上游
+- `"openai"`：请求**不经过 Bridge 转换**，以原始 OpenAI Responses 格式直接透传代理到上游
+
+OpenAI 协议 Provider 会创建一个与上游的直连 HTTP 代理，支持流式（SSE）和非流式响应。适用于：
+- 直接对接 OpenAI API（图像生成、TTS、嵌入等不需要 Anthropic 转换的请求）
+- 对接其他 OpenAI-compatible 提供商
+
+### 费用统计
+
+每请求日志（非流式/流式）均包含 `cost_cny` 字段，显示该请求的费用（单位：人民币元）。费用依据 `provider.models.<alias>.pricing` 配置计算。
+
+服务器关闭时输出完整会话费用汇总，包含按模型分组的费用明细和缓存命中率。
+
+配置示例：
+
+```yaml
+provider:
+  models:
+    gpt-5.4:
+      pricing:
+        input_price: 1          # ¥1 / M tokens
+        output_price: 2         # ¥2 / M tokens
+        cache_write_price: 0
+        cache_read_price: 0.2   # ¥0.2 / M tokens
+```

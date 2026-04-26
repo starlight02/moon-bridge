@@ -224,3 +224,19 @@ func WriteSummary(w io.Writer, s Summary) {
 		}
 	}
 }
+
+// ComputeCost returns the cost in RMB for a given model and usage without
+// recording it in the session stats. Returns 0 if no pricing is configured
+// for the model.
+func (s *SessionStats) ComputeCost(model string, usage Usage) float64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, ok := s.pricing[model]
+	if !ok {
+		return 0
+	}
+	return computeCost(usage, p)
+}

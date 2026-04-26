@@ -40,6 +40,7 @@ type Config struct {
 	ProviderAPIKey    string
 	ProviderVersion   string
 	ProviderUserAgent string
+	Protocol  string // "anthropic" (default) or "openai"
 	WebSearchSupport  WebSearchSupport
 	WebSearchMaxUses  int
 	TavilyAPIKey      string
@@ -61,6 +62,7 @@ type ProviderDef struct {
 	APIKey    string
 	Version   string
 	UserAgent string
+	Protocol  string // "anthropic" (default) or "openai"
 }
 
 type ResponseProxyConfig struct {

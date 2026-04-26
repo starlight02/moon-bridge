@@ -126,9 +126,9 @@ func buildProviderDefsFromConfig(cfg config.Config) map[string]provider.Provider
 				APIKey:    def.APIKey,
 				Version:   def.Version,
 				UserAgent: def.UserAgent,
+			Protocol:   def.Protocol,
 			}
 		}
-		return defs
 	}
 	// Legacy single-provider mode.
 	return provider.BuildProviderConfigs(

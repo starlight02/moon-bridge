@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"bytes"
+	"strings"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -108,6 +110,13 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 		return
 	}
 
+	// Check if this model routes to an OpenAI-protocol provider (skip Anthropic conversion).
+	providerKey := server.bridge.ProviderFor(responsesRequest.Model)
+	if server.providerMgr != nil && server.providerMgr.ProtocolForModel(responsesRequest.Model) == "openai" {
+		server.handleOpenAIResponse(writer, request, responsesRequest, providerKey, record)
+		return
+	}
+
 	anthropicRequest, plan, err := server.bridge.ToAnthropic(responsesRequest, sess)
 	conversionContext := server.bridge.ConversionContext(responsesRequest)
 	record.AnthropicRequest = anthropicRequest
@@ -153,6 +162,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 		})
 	}
 	log.Info("request completed",
+		"cost_cny", server.stats.ComputeCost(responsesRequest.Model, stats.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens}),
 		"model", responsesRequest.Model,
 		"input_tokens", usage.InputTokens,
 		"output_tokens", usage.OutputTokens,
@@ -225,6 +235,7 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 	}
 	log.Info("stream completed",
 		"model", responsesRequest.Model,
+		"cost_cny", server.stats.ComputeCost(responsesRequest.Model, stats.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens}),
 		"events", len(openAIEvents),
 		"input_tokens", usage.InputTokens,
 		"output_tokens", usage.OutputTokens,
@@ -330,4 +341,90 @@ func (w *anthropicClientWrapper) CreateMessage(ctx context.Context, request anth
 
 func (w *anthropicClientWrapper) StreamMessage(ctx context.Context, request anthropic.MessageRequest) (anthropic.Stream, error) {
 	return w.client.StreamMessage(ctx, request)
+}
+
+// handleOpenAIResponse proxies a request directly to an OpenAI-compatible upstream
+// without Anthropic protocol conversion. It handles both streaming and non-streaming.
+func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *http.Request, responsesRequest openai.ResponsesRequest, providerKey string, record mbtrace.Record) {
+	log := logger.L().With("path", request.URL.Path, "method", request.Method)
+	if server.providerMgr == nil {
+		log.Error("no provider manager configured for openai protocol")
+		writeOpenAIError(writer, http.StatusBadGateway, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: "provider routing not configured",
+			Type:    "server_error",
+			Code:    "internal_error",
+		}})
+		return
+	}
+
+	baseURL := server.providerMgr.ProviderBaseURL(providerKey)
+	apiKey := server.providerMgr.ProviderAPIKey(providerKey)
+	if baseURL == "" {
+		log.Error("openai provider has no base_url", "provider", providerKey)
+		writeOpenAIError(writer, http.StatusBadGateway, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: "provider not configured",
+			Type:    "server_error",
+			Code:    "internal_error",
+		}})
+		return
+	}
+
+	// Build upstream URL: baseURL + /v1/responses
+	upstreamURL := strings.TrimRight(baseURL, "/")
+	if !strings.HasSuffix(upstreamURL, "/v1/responses") && !strings.HasSuffix(upstreamURL, "/responses") {
+		upstreamURL += "/v1/responses"
+	}
+
+	// Serialize the original request
+	body, err := json.Marshal(responsesRequest)
+	if err != nil {
+		log.Error("failed to marshal request", "error", err)
+		writeOpenAIError(writer, http.StatusInternalServerError, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: "internal error",
+			Type:    "server_error",
+			Code:    "internal_error",
+		}})
+		return
+	}
+
+	// Create upstream request
+	upstreamReq, err := http.NewRequestWithContext(request.Context(), http.MethodPost, upstreamURL, bytes.NewReader(body))
+	if err != nil {
+		log.Error("failed to create upstream request", "error", err)
+		writeOpenAIError(writer, http.StatusBadGateway, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: "upstream request failed",
+			Type:    "server_error",
+			Code:    "internal_error",
+		}})
+		return
+	}
+	upstreamReq.Header.Set("Content-Type", "application/json")
+	upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	// Send request
+	client := &http.Client{Timeout: 0} // no timeout for streaming
+	upstreamResp, err := client.Do(upstreamReq)
+	if err != nil {
+		log.Error("upstream request failed", "error", err)
+		record.Error = map[string]string{"stage": "openai_upstream", "message": err.Error()}
+		server.writeTrace(record)
+		writeOpenAIError(writer, http.StatusBadGateway, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: err.Error(),
+			Type:    "server_error",
+			Code:    "provider_error",
+		}})
+		return
+	}
+	defer upstreamResp.Body.Close()
+
+	// Copy response headers and status
+	for key, values := range upstreamResp.Header {
+		for _, v := range values {
+			writer.Header().Add(key, v)
+		}
+	}
+	writer.WriteHeader(upstreamResp.StatusCode)
+
+	// Stream the response body as-is
+	io.Copy(writer, upstreamResp.Body)
 }
