@@ -218,7 +218,7 @@ func (bridge *Bridge) ConversionContext(request openai.ResponsesRequest) Convers
 
 func (bridge *Bridge) convertToolChoice(raw json.RawMessage, context ConversionContext) (anthropic.ToolChoice, error) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return anthropic.ToolChoice{}, nil
+		return anthropic.ToolChoice{Type: "auto"}, nil
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err == nil {

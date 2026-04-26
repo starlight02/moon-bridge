@@ -431,3 +431,28 @@ developer:
 		t.Fatal("LoadFromYAML() error = nil, want unknown proxy addr error")
 	}
 }
+
+func TestLoadFromFileExpandsEnvironmentVariables(t *testing.T) {
+	t.Setenv("MOONBRIDGE_TEST_API_KEY", "expanded-key")
+
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte(`
+mode: Transform
+provider:
+  base_url: https://provider.example.test
+  api_key: "${MOONBRIDGE_TEST_API_KEY}"
+  models:
+    moonbridge:
+      name: claude-test
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	if cfg.ProviderAPIKey != "expanded-key" {
+		t.Fatalf("ProviderAPIKey = %q, want expanded-key", cfg.ProviderAPIKey)
+	}
+}

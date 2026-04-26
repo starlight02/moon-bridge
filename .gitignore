@@ -36,3 +36,5 @@ config.yml
 config.yaml
 /trace/
 /logs/
+.env
+docker-compose.yml

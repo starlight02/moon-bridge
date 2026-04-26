@@ -387,3 +387,18 @@ func TestToAnthropicSkipsEmptyWebSearchPreludeHistory(t *testing.T) {
 		}
 	}
 }
+
+func TestToAnthropicDefaultsToolChoiceToAuto(t *testing.T) {
+	request := openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`"hi"`),
+	}
+
+	converted, _, err := testBridge().ToAnthropic(request, nil)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	if converted.ToolChoice.Type != "auto" {
+		t.Fatalf("tool choice = %+v", converted.ToolChoice)
+	}
+}

@@ -1,0 +1,41 @@
+services:
+  moonbridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: moonbridge:local
+    container_name: moonbridge
+    restart: unless-stopped
+    command:
+      - -config
+      - /config/config.yml
+      - -addr
+      - 0.0.0.0:38440
+    ports:
+      - "38440:38440"
+    environment:
+      MOONBRIDGE_CONFIG: /config/config.yml
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      MOONBRIDGE_CLIENT_API_KEY: ${MOONBRIDGE_CLIENT_API_KEY:-}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./config.yml:/config/config.yml:ro
+      - ./logs:/app/logs
+      - ./trace:/app/trace
+    healthcheck:
+      test:
+        - CMD
+        - /app/moonbridge
+        - -config
+        - /config/config.yml
+        - -addr
+        - 0.0.0.0:38440
+        - -print-addr
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
