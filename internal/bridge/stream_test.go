@@ -161,7 +161,7 @@ func TestConvertStreamEventsSplitsNamespacedFunctionTool(t *testing.T) {
 	}
 
 	bridgeUnderTest := testBridge()
-	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil, bridge.StreamOptions{})
+	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil)
 	completed := streamLifecycleResponse(t, converted, "response.completed")
 	if len(completed.Output) != 1 {
 		t.Fatalf("completed output = %+v", completed.Output)
@@ -226,7 +226,7 @@ func TestConvertStreamEventsMapsRequestCustomToolToCustomToolCall(t *testing.T) 
 	}
 
 	bridgeUnderTest := testBridge()
-	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil, bridge.StreamOptions{})
+	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil)
 	var customDelta openai.CustomToolCallInputDeltaEvent
 	for _, event := range converted {
 		if event.Event == "response.function_call_arguments.delta" || event.Event == "response.function_call_arguments.done" {
@@ -279,7 +279,7 @@ func TestConvertStreamEventsNormalizesApplyPatchGrammarTerminator(t *testing.T) 
 	}
 
 	bridgeUnderTest := testBridge()
-	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil, bridge.StreamOptions{})
+	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil)
 	var delta openai.CustomToolCallInputDeltaEvent
 	for _, event := range converted {
 		if event.Event == "response.custom_tool_call_input.delta" {
@@ -323,7 +323,7 @@ func TestConvertStreamEventsBuildsApplyPatchGrammarFromProxyOperations(t *testin
 	}
 
 	bridgeUnderTest := testBridge()
-	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil, bridge.StreamOptions{})
+	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil)
 	completed := streamLifecycleResponse(t, converted, "response.completed")
 	want := "*** Begin Patch\n*** Add File: docs/api.md\n+# API\n+content\n*** End Patch"
 	if completed.Output[0].Input != want {
@@ -358,7 +358,7 @@ func TestConvertStreamEventsBuildsApplyPatchGrammarFromSplitAddFileTool(t *testi
 	}
 
 	bridgeUnderTest := testBridge()
-	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil, bridge.StreamOptions{})
+	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil)
 	completed := streamLifecycleResponse(t, converted, "response.completed")
 	if completed.Output[0].Name != "apply_patch" {
 		t.Fatalf("output tool name = %q", completed.Output[0].Name)
@@ -397,7 +397,7 @@ func TestConvertStreamEventsBuildsApplyPatchReplacementFromUpdateContent(t *test
 	}
 
 	bridgeUnderTest := testBridge()
-	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil, bridge.StreamOptions{})
+	converted := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridgeUnderTest.ConversionContext(request), nil)
 	completed := streamLifecycleResponse(t, converted, "response.completed")
 	want := "*** Begin Patch\n*** Delete File: internal/app/app.go\n*** Add File: internal/app/app.go\n+package app\n+\n+const Name = \"Moon Bridge\"\n*** End Patch"
 	if completed.Output[0].Input != want {
@@ -609,7 +609,7 @@ func TestDeepSeekThinkingIsStatefullyInjectedOnlyForToolCalls(t *testing.T) {
 	}
 
 	sess := session.New()
-	convertedEvents := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, sess, bridge.StreamOptions{})
+	convertedEvents := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, sess)
 	completed := streamLifecycleResponse(t, convertedEvents, "response.completed")
 	if len(completed.Output) != 1 || completed.Output[0].Type != "function_call" {
 		t.Fatalf("completed output = %+v", completed.Output)
@@ -681,7 +681,7 @@ func TestDeepSeekSignatureOnlyThinkingIsReinjectedForToolCalls(t *testing.T) {
 	}
 
 	sess := session.New()
-	convertedEvents := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, sess, bridge.StreamOptions{})
+	convertedEvents := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, sess)
 
 	completed := streamLifecycleResponse(t, convertedEvents, "response.completed")
 	if len(completed.Output) != 1 || completed.Output[0].Type != "function_call" {
@@ -740,7 +740,7 @@ func TestDeepSeekThinkingIsInjectedForToolChainFinalAssistantText(t *testing.T) 
 	}
 
 	sess := session.New()
-	bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, sess, bridge.StreamOptions{})
+	bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, sess)
 	followup := openai.ResponsesRequest{
 		Model: "gpt-test",
 		Input: json.RawMessage(`[

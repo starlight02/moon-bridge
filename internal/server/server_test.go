@@ -259,6 +259,9 @@ func TestResponsesHandlerStreamsOpenAIEvents(t *testing.T) {
 	if got := recorder.Header().Get("Content-Type"); got != "text/event-stream" {
 		t.Fatalf("content-type = %q", got)
 	}
+	if bytes.Contains(recorder.Body.Bytes(), []byte("Collecting from upstream")) || bytes.Contains(recorder.Body.Bytes(), []byte(`"phase":"commentary"`)) {
+		t.Fatalf("stream body contains synthetic commentary preamble: %s", recorder.Body.String())
+	}
 	if !bytes.Contains(recorder.Body.Bytes(), []byte("event: response.output_text.delta")) {
 		t.Fatalf("stream body = %s", recorder.Body.String())
 	}

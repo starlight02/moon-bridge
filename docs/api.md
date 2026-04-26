@@ -62,7 +62,7 @@ Transform 模式下，以下 OpenAI Responses 请求字段被支持：
 
 ## 流式事件
 
-Anthropic Messages SSE 事件流会被逐事件转换为 OpenAI Responses 格式的事件流。由于当前采用先收集再转换的架构，服务器会在开始收集上游响应前立即下发一条 `phase: "commentary"` 的 preamble 消息（"Collecting from upstream..."），让客户端立即看到活动状态。该消息不会被 Codex 纳入后续请求上下文。
+Anthropic Messages SSE 事件流会先收集再转换为 OpenAI Responses 格式的事件流。服务器不再生成 synthetic commentary preamble，因此不会向客户端注入旧等待提示；历史中已存在的 `phase: "commentary"` 消息会在请求转换时跳过，不会继续发送给上游。
 
 ### 事件映射
 
