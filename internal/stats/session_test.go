@@ -32,19 +32,31 @@ func TestWriteSummaryAlwaysIncludesTotalCost(t *testing.T) {
 }
 
 func TestFormatUsageLine(t *testing.T) {
-	line := FormatUsageLine("moonbridge", Usage{
-		InputTokens:              1_000_000,
-		CacheCreationInputTokens: 500_000,
-		CacheReadInputTokens:     500_000,
-		OutputTokens:             250_000,
-	}, 12.345, 6.789)
+	line := FormatUsageLine(UsageLineParams{
+		RequestModel: "moonbridge",
+		ActualModel:  "deepseek-v4-pro",
+		Usage: Usage{
+			InputTokens:              1_000_000,
+			CacheCreationInputTokens: 500_000,
+			CacheReadInputTokens:     500_000,
+			OutputTokens:             250_000,
+		},
+		RequestCost:    6.789,
+		TotalCost:      12.345,
+		CacheHitRate:   25.00,
+		CacheWriteRate: 25.00,
+	})
 
 	for _, want := range []string{
-		"moonbridge Usage:",
-		"1.500000 M Input",
-		"0.250000 M Output",
-		"Session Cache Hit Rate: 12.35%",
-		"Billing: 6.79 CNY",
+		"Model: moonbridge \u27a1\ufe0f deepseek-v4-pro",
+		"0.5000 M Cache Read",
+		"0.5000 M Cache Write",
+		"1.0000 M Fresh",
+		"Output: 0.2500 M",
+		"Request Billing: 6.7890 CNY",
+		"Total Billing: 12.3450 CNY",
+		"Current Cache Hit Rate: 25.00%",
+		"Current Cache Write Rate: 25.00%",
 	} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("usage line missing %q: %s", want, line)

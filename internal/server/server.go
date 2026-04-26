@@ -174,8 +174,13 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	log.Debug("sending non-streaming request to provider", "model", anthropicRequest.Model)
 	anthropicResponse, err := effectiveProvider.CreateMessage(request.Context(), anthropicRequest)
 	if err != nil {
-		log.Error("provider create message failed", "error", err)
 		status, payload := server.bridge.ErrorResponse(err)
+		log.Error(stats.FormatErrorLine(stats.ErrorLineParams{
+			RequestModel: responsesRequest.Model,
+			ActualModel:  anthropicRequest.Model,
+			StatusCode:   status,
+			Message:      payload.Error.Message,
+		}))
 		record.Error = traceError("provider_create_message", err)
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
@@ -193,7 +198,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 			CacheReadInputTokens:     usage.CacheReadInputTokens,
 		})
 	}
-	logUsageLine(anthropicRequest.Model, stats.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens}, server.stats)
+	logUsageLine(responsesRequest.Model, anthropicRequest.Model, stats.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens}, server.stats)
 	record.AnthropicResponse = anthropicResponse
 	record.OpenAIResponse = openAIResponse
 	server.writeTrace(record)
@@ -205,8 +210,13 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 	log.Debug("starting stream")
 	stream, err := provider.StreamMessage(request.Context(), anthropicRequest)
 	if err != nil {
-		log.Error("provider stream message failed", "error", err)
 		status, payload := server.bridge.ErrorResponse(err)
+		log.Error(stats.FormatErrorLine(stats.ErrorLineParams{
+			RequestModel: responsesRequest.Model,
+			ActualModel:  anthropicRequest.Model,
+			StatusCode:   status,
+			Message:      payload.Error.Message,
+		}))
 		record.Error = traceError("provider_stream_message", err)
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
@@ -270,7 +280,7 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 			CacheReadInputTokens:     usage.CacheReadInputTokens,
 		})
 	}
-	logUsageLine(anthropicRequest.Model, stats.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens}, server.stats)
+	logUsageLine(responsesRequest.Model, anthropicRequest.Model, stats.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens}, server.stats)
 	// Update cache registry from streaming usage signals.
 	server.bridge.UpdateRegistryFromUsage(plan, cache.UsageSignals{
 		InputTokens:              usage.InputTokens,
@@ -469,7 +479,12 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 	}
 	upstreamResp, err := client.Do(upstreamReq)
 	if err != nil {
-		log.Error("upstream request failed", "error", err)
+		log.Error(stats.FormatErrorLine(stats.ErrorLineParams{
+			RequestModel: responsesRequest.Model,
+			ActualModel:  upstreamRequest.Model,
+			StatusCode:   http.StatusBadGateway,
+			Message:      err.Error(),
+		}))
 		record.Error = map[string]string{"stage": "openai_upstream", "message": err.Error()}
 		server.writeTrace(record)
 		writeOpenAIError(writer, http.StatusBadGateway, openai.ErrorResponse{Error: openai.ErrorObject{
@@ -500,22 +515,27 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 	}
 	if usage, ok := openAIUsageFromResponse(captured.Bytes(), responsesRequest.Stream); ok {
 		server.stats.Record(responsesRequest.Model, usage)
-		logUsageLine(upstreamRequest.Model, usage, server.stats)
+		logUsageLine(responsesRequest.Model, upstreamRequest.Model, usage, server.stats)
 	}
 }
 
-func logUsageLine(displayModel string, usage stats.Usage, sessionStats *stats.SessionStats) {
-	if sessionStats == nil {
-		logger.Info(stats.FormatUsageLine(displayModel, usage, 0, 0))
-		return
+func logUsageLine(requestModel, actualModel string, usage stats.Usage, sessionStats *stats.SessionStats) {
+	var requestCost, totalCost, hitRate, writeRate float64
+	if sessionStats != nil {
+		requestCost = sessionStats.ComputeCost(requestModel, usage)
+		totalCost = sessionStats.Summary().TotalCost
+		hitRate = sessionStats.CacheHitRate()
+		writeRate = sessionStats.CacheWriteRate()
 	}
-	summary := sessionStats.Summary()
-	logger.Info(stats.FormatUsageLine(
-		displayModel,
-		usage,
-		summary.CacheHitRate,
-		summary.TotalCost,
-	))
+	logger.Info(stats.FormatUsageLine(stats.UsageLineParams{
+		RequestModel:   requestModel,
+		ActualModel:    actualModel,
+		Usage:          usage,
+		RequestCost:    requestCost,
+		TotalCost:      totalCost,
+		CacheHitRate:   hitRate,
+		CacheWriteRate: writeRate,
+	}))
 }
 
 func openAIUsageFromResponse(data []byte, stream bool) (stats.Usage, bool) {

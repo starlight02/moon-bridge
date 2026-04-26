@@ -58,16 +58,16 @@ type Config struct {
 
 // ProviderDef defines a single upstream provider for multi-provider mode.
 type ProviderDef struct {
-	BaseURL   string
-	APIKey    string
-	Version   string
-	UserAgent string
-	Protocol  string // "anthropic" (default) or "openai"
-	WebSearchSupport  WebSearchSupport
-	WebSearchMaxUses  int
-	TavilyAPIKey      string
-	FirecrawlAPIKey   string
-	SearchMaxRounds   int
+	BaseURL          string
+	APIKey           string
+	Version          string
+	UserAgent        string
+	Protocol         string // "anthropic" (default) or "openai"
+	WebSearchSupport WebSearchSupport
+	WebSearchMaxUses int
+	TavilyAPIKey     string
+	FirecrawlAPIKey  string
+	SearchMaxRounds  int
 }
 
 type ResponseProxyConfig struct {
@@ -131,7 +131,7 @@ func (cfg Config) validateTransform() error {
 	// Multi-provider mode: ProviderDefs is non-empty.
 	if len(cfg.ProviderDefs) > 0 {
 		if len(cfg.ProviderModels) == 0 {
-			return errors.New("provider.models must contain at least one model mapping")
+			return errors.New("provider.providers.<key>.models must contain at least one model mapping")
 		}
 		for key, def := range cfg.ProviderDefs {
 			if key == "" {
@@ -151,14 +151,14 @@ func (cfg Config) validateTransform() error {
 		}
 		for alias, model := range cfg.ProviderModels {
 			if alias == "" || model.Name == "" {
-				return errors.New("provider.models cannot contain empty aliases or models")
+				return errors.New("provider.providers.<key>.models cannot contain empty aliases or models")
 			}
 			providerKey := model.Provider
 			if providerKey == "" {
 				providerKey = "default"
 			}
 			if _, ok := cfg.ProviderDefs[providerKey]; !ok {
-				return fmt.Errorf("provider.models.%s.provider references unknown provider %q", alias, providerKey)
+				return fmt.Errorf("provider.providers.<key>.models.%s references unknown provider %q", alias, providerKey)
 			}
 		}
 		return nil
@@ -171,11 +171,11 @@ func (cfg Config) validateTransform() error {
 		return errors.New("provider.api_key is required")
 	}
 	if len(cfg.ModelMap) == 0 {
-		return errors.New("provider.models must contain at least one model mapping")
+		return errors.New("provider.providers.<key>.models must contain at least one model mapping")
 	}
 	for alias, model := range cfg.ModelMap {
 		if alias == "" || model == "" {
-			return errors.New("provider.models cannot contain empty aliases or models")
+			return errors.New("provider.providers.<key>.models cannot contain empty aliases or models")
 		}
 	}
 	return nil

@@ -9,7 +9,7 @@
 ```bash
 cp config.example.yml config.yml
 # 编辑 config.yml，填入 provider.providers.* 的真实 base_url / api_key，
-# 并在 provider.models 中配置模型别名、上游模型名和可选价格。
+# 并在各 Provider 的 models 中配置模型别名、上游模型名和可选价格。
 ```
 
 `config.yml` 已在 `.gitignore` 中，不会提交到仓库。也可通过 `MOONBRIDGE_CONFIG` 环境变量指定其他路径。

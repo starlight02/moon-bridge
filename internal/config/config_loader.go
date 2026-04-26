@@ -26,16 +26,15 @@ type ServerFileConfig struct {
 }
 
 type ProviderFileConfig struct {
-	BaseURL          string                              `yaml:"base_url"`
-	APIKey           string                              `yaml:"api_key"`
-	Version          string                              `yaml:"version"`
-	UserAgent        string                              `yaml:"user_agent"`
-	WebSearch        WebSearchFileConfig                 `yaml:"web_search"`
-	DefaultMaxTokens int                                 `yaml:"default_max_tokens"`
-	DefaultModel     string                              `yaml:"default_model"`
-	Providers        map[string]ProviderDefFileConfig    `yaml:"providers"`
-	Models           map[string]ProviderModelFileConfig  `yaml:"models"`
-	DeepSeekV4       bool                                `yaml:"deepseek_v4"`
+	BaseURL          string                           `yaml:"base_url"`
+	APIKey           string                           `yaml:"api_key"`
+	Version          string                           `yaml:"version"`
+	UserAgent        string                           `yaml:"user_agent"`
+	WebSearch        WebSearchFileConfig              `yaml:"web_search"`
+	DefaultMaxTokens int                              `yaml:"default_max_tokens"`
+	DefaultModel     string                           `yaml:"default_model"`
+	Providers        map[string]ProviderDefFileConfig `yaml:"providers"`
+	DeepSeekV4       bool                             `yaml:"deepseek_v4"`
 }
 
 type CacheFileConfig struct {
@@ -49,23 +48,24 @@ type CacheFileConfig struct {
 	MinCacheTokens           int    `yaml:"min_cache_tokens"`
 	ExpectedReuse            int    `yaml:"expected_reuse"`
 	MinimumValueScore        int    `yaml:"minimum_value_score"`
+	MinBreakpointTokens      int    `yaml:"min_breakpoint_tokens"`
 }
 
 type ProviderModelFileConfig struct {
 	Name            string                 `yaml:"name"`
-	Provider        string                 `yaml:"provider"`
 	ContextWindow   int                    `yaml:"context_window"`
 	MaxOutputTokens int                    `yaml:"max_output_tokens"`
 	Pricing         ModelPricingFileConfig `yaml:"pricing"`
 }
 
 type ProviderDefFileConfig struct {
-	BaseURL   string `yaml:"base_url"`
-	APIKey    string `yaml:"api_key"`
-	Version   string `yaml:"version"`
-	UserAgent string `yaml:"user_agent"`
-	Protocol  string `yaml:"protocol"`
-	WebSearch WebSearchFileConfig `yaml:"web_search"`
+	BaseURL   string                             `yaml:"base_url"`
+	APIKey    string                             `yaml:"api_key"`
+	Version   string                             `yaml:"version"`
+	UserAgent string                             `yaml:"user_agent"`
+	Protocol  string                             `yaml:"protocol"`
+	WebSearch WebSearchFileConfig                `yaml:"web_search"`
+	Models    map[string]ProviderModelFileConfig `yaml:"models"`
 }
 
 // ModelPricingFileConfig holds optional per-model pricing in RMB per M tokens.
@@ -145,7 +145,7 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 		return Config{}, err
 	}
 	providerDefs := fromProviderDefFileConfig(fileConfig.Provider.Providers)
-	providerModels := FromProviderModelFileConfig(fileConfig.Provider.Models)
+	providerModels := providerModelsFromDefs(fileConfig.Provider.Providers)
 
 	// If multi-provider is configured, legacy fields aren't required for Transform.
 	// But we still set ProviderBaseURL/ProviderAPIKey for backward compat with
@@ -250,22 +250,24 @@ func FromAnthropicProxyFileConfig(fileConfig ProxyFileConfig) AnthropicProxyConf
 	}
 }
 
-func FromProviderModelFileConfig(fileConfig map[string]ProviderModelFileConfig) map[string]ProviderModelConfig {
-	models := make(map[string]ProviderModelConfig, len(fileConfig))
-	for alias, model := range fileConfig {
-		trimmedAlias := strings.TrimSpace(alias)
-		if trimmedAlias == "" {
-			continue
-		}
-		models[trimmedAlias] = ProviderModelConfig{
-			Name:            strings.TrimSpace(model.Name),
-			Provider:        strings.TrimSpace(model.Provider),
-			ContextWindow:   model.ContextWindow,
-			MaxOutputTokens: model.MaxOutputTokens,
-			InputPrice:      model.Pricing.InputPrice,
-			OutputPrice:     model.Pricing.OutputPrice,
-			CacheWritePrice: model.Pricing.CacheWritePrice,
-			CacheReadPrice:  model.Pricing.CacheReadPrice,
+func providerModelsFromDefs(providers map[string]ProviderDefFileConfig) map[string]ProviderModelConfig {
+	models := make(map[string]ProviderModelConfig)
+	for providerKey, def := range providers {
+		for alias, model := range def.Models {
+			trimmedAlias := strings.TrimSpace(alias)
+			if trimmedAlias == "" {
+				continue
+			}
+			models[trimmedAlias] = ProviderModelConfig{
+				Name:            strings.TrimSpace(model.Name),
+				Provider:        strings.TrimSpace(providerKey),
+				ContextWindow:   model.ContextWindow,
+				MaxOutputTokens: model.MaxOutputTokens,
+				InputPrice:      model.Pricing.InputPrice,
+				OutputPrice:     model.Pricing.OutputPrice,
+				CacheWritePrice: model.Pricing.CacheWritePrice,
+				CacheReadPrice:  model.Pricing.CacheReadPrice,
+			}
 		}
 	}
 	return models
@@ -311,5 +313,6 @@ func fromCacheFileConfig(fileConfig CacheFileConfig) CacheConfig {
 		MinCacheTokens:           intOrDefault(fileConfig.MinCacheTokens, 1024),
 		ExpectedReuse:            intOrDefault(fileConfig.ExpectedReuse, 2),
 		MinimumValueScore:        intOrDefault(fileConfig.MinimumValueScore, 2048),
+		MinBreakpointTokens:      intOrDefault(fileConfig.MinBreakpointTokens, 1024),
 	}
 }

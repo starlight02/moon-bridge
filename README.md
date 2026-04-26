@@ -10,7 +10,7 @@ Moon Bridge 是一个 OpenAI Responses 兼容转发层。你可以像调用 Open
 cp config.example.yml config.yml
 ```
 
-2. 编辑 `config.yml`，填入 `provider.providers` 下各上游 Provider 的 `base_url` 和 `api_key`，并在 `provider.models` 中配置模型别名到上游模型的映射。
+2. 编辑 `config.yml`，填入 `provider.providers` 下各上游 Provider 的 `base_url` 和 `api_key`，并在各 Provider 的 `models` 中配置模型别名到上游模型的映射。
 
 3. 启动服务：
 
@@ -40,7 +40,7 @@ go run ./cmd/moonbridge
 
 ### Provider 与模型路由
 
-当前推荐使用多 Provider 配置：`provider.providers` 定义上游，`provider.models` 定义客户端可见的模型别名。例如客户端请求 `model: "moonbridge"` 时，会发往 `deepseek` Provider 的 `deepseek-v4-pro`；请求 `model: "gpt-image"` 时，会按 OpenAI Responses 协议直接发往 `openai` Provider 的 `gpt-image-1.5`：
+模型定义在各 Provider 下的 `models` 字段中，客户端使用模型别名请求。例如客户端请求 `model: "moonbridge"` 时，会发往 `deepseek` Provider 的 `deepseek-v4-pro`；请求 `model: "gpt-image"` 时，会按 OpenAI Responses 协议直接发往 `openai` Provider 的 `gpt-image-1.5`：
 
 ```yaml
 provider:
@@ -49,39 +49,41 @@ provider:
       base_url: "https://api.deepseek.com"
       api_key: "${DEEPSEEK_API_KEY}"
       version: "2023-06-01"
+      models:
+        moonbridge:
+          name: "deepseek-v4-pro"
+          context_window: 200000
+          max_output_tokens: 100000
     openai:
       base_url: "https://api.openai.com"
       api_key: "${OPENAI_API_KEY}"
       protocol: "openai"
+      models:
+        gpt-image:
+          name: "gpt-image-1.5"
 
   default_model: "moonbridge"
-  models:
-    moonbridge:
-      provider: "deepseek"
-      name: "deepseek-v4-pro"
-      context_window: 200000
-      max_output_tokens: 100000
-    gpt-image:
-      provider: "openai"
-      name: "gpt-image-1.5"
 ```
 
 `protocol` 默认为 `anthropic`。设置为 `openai` 时，本轮请求不会进入 Anthropic 转换层，而是保留 OpenAI Responses 格式，只把模型别名改写为上游真实模型名。
 
 ### 模型定价
 
-`provider.models.<alias>.pricing` 是可选的 per-model 价格配置，单位是元（¥）/ M tokens。当某个模型配置了价格后，Moon Bridge 会按 session 累加费用，并在每次请求和服务退出时输出费用统计。
+`provider.providers.<key>.models.<alias>.pricing` 是可选的 per-model 价格配置，单位是元（¥）/ M tokens。当某个模型配置了价格后，Moon Bridge 会按 session 累加费用，并在每次请求和服务退出时输出费用统计。
 
 ```yaml
 provider:
-  models:
-    moonbridge:
-      name: "deepseek-v4-pro"
-      pricing:
-        input_price: 2        # 无缓存输入 元/M tokens
-        output_price: 8       # 模型输出
-        cache_write_price: 1  # 缓存写入
-        cache_read_price: 0.2  # 缓存读取
+  providers:
+    deepseek:
+      # ...
+      models:
+        moonbridge:
+          name: "deepseek-v4-pro"
+          pricing:
+            input_price: 2        # 无缓存输入 元/M tokens
+            output_price: 8       # 模型输出
+            cache_write_price: 1  # 缓存写入
+            cache_read_price: 0.2  # 缓存读取
 ```
 
 费用计算方式：`(input_tokens × input_price + cache_creation × cache_write_price + cache_read × cache_read_price + output_tokens × output_price) / 1_000_000`，四项均为独立计费。如果价格配置不全（某项为 0 或未设置），该项不产生费用。每请求 INFO 行中的 `Input` 展示采用 OpenAI 语义：`input_tokens + cache_read_input_tokens`，不把 `cache_creation_input_tokens` 额外计入展示值；cache creation 仍按 `cache_write_price` 计费，并会出现在详细汇总里。

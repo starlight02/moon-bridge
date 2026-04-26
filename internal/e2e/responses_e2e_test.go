@@ -237,7 +237,7 @@ func e2eModelAlias(models map[string]string) (string, error) {
 		}
 	}
 	if len(aliases) == 0 {
-		return "", fmt.Errorf("provider.models must contain at least one non-empty model mapping")
+		return "", fmt.Errorf("provider.providers.<key>.models must contain at least one non-empty model mapping")
 	}
 	slices.Sort(aliases)
 	return aliases[0], nil

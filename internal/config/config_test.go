@@ -12,23 +12,28 @@ func TestLoadFromYAMLParsesTransformConfig(t *testing.T) {
 	cfg, err := config.LoadFromYAML([]byte(`
 mode: Transform
 provider:
-  base_url: https://provider.example.test
-  api_key: upstream-key
-  user_agent: Bun/1.3.13
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      user_agent: Bun/1.3.13
+      web_search:
+        support: auto
+      models:
+        gpt-test:
+          name: claude-test
+          context_window: 200000
+          max_output_tokens: 100000
+        gpt-fast:
+          name: claude-fast
   web_search:
     support: auto
     max_uses: 12
   default_model: gpt-test
-  models:
-    gpt-test:
-      name: claude-test
-      context_window: 200000
-      max_output_tokens: 100000
-    gpt-fast:
-      name: claude-fast
 cache:
   mode: explicit
   ttl: 1h
+  min_breakpoint_tokens: 4096
 trace_requests: true
 `))
 	if err != nil {
@@ -41,11 +46,8 @@ trace_requests: true
 	if cfg.Addr != "127.0.0.1:38440" {
 		t.Fatalf("Addr = %q, want 127.0.0.1:38440", cfg.Addr)
 	}
-	if cfg.ProviderVersion != "2023-06-01" {
-		t.Fatalf("ProviderVersion = %q", cfg.ProviderVersion)
-	}
-	if cfg.ProviderUserAgent != "Bun/1.3.13" {
-		t.Fatalf("ProviderUserAgent = %q", cfg.ProviderUserAgent)
+	if def, ok := cfg.ProviderDefs["main"]; !ok || def.UserAgent != "Bun/1.3.13" {
+		t.Fatalf("ProviderDefs[main].UserAgent = %+v", cfg.ProviderDefs)
 	}
 	if cfg.WebSearchMaxUses != 12 {
 		t.Fatalf("WebSearchMaxUses = %d", cfg.WebSearchMaxUses)
@@ -68,6 +70,9 @@ trace_requests: true
 	if cfg.Cache.Mode != "explicit" || cfg.Cache.TTL != "1h" {
 		t.Fatalf("Cache = %+v", cfg.Cache)
 	}
+	if cfg.Cache.MinBreakpointTokens != 4096 {
+		t.Fatalf("Cache.MinBreakpointTokens = %d", cfg.Cache.MinBreakpointTokens)
+	}
 	if !cfg.TraceRequests {
 		t.Fatal("TraceRequests = false, want true")
 	}
@@ -81,13 +86,15 @@ func TestLoadFromYAMLCanDisableWebSearch(t *testing.T) {
 	cfg, err := config.LoadFromYAML([]byte(`
 mode: Transform
 provider:
-  base_url: https://provider.example.test
-  api_key: upstream-key
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        moonbridge:
+          name: claude-test
   web_search:
     support: disabled
-  models:
-    moonbridge:
-      name: claude-test
 `))
 	if err != nil {
 		t.Fatalf("LoadFromYAML() error = %v", err)
@@ -108,17 +115,16 @@ provider:
     deepseek:
       base_url: https://deepseek.example.test
       api_key: deepseek-key
+      models:
+        moonbridge:
+          name: deepseek-v4-pro
     openai:
       base_url: https://openai.example.test
       api_key: openai-key
       protocol: openai
-  models:
-    moonbridge:
-      provider: deepseek
-      name: deepseek-v4-pro
-    image:
-      provider: openai
-      name: gpt-image-1.5
+      models:
+        image:
+          name: gpt-image-1.5
 `))
 	if err != nil {
 		t.Fatalf("LoadFromYAML() error = %v", err)
@@ -140,23 +146,9 @@ provider:
     openai:
       api_key: openai-key
       protocol: openai
-  models:
-    image:
-      provider: openai
-      name: gpt-image-1.5
-`,
-		"unknown model provider": `
-mode: Transform
-provider:
-  providers:
-    openai:
-      base_url: https://openai.example.test
-      api_key: openai-key
-      protocol: openai
-  models:
-    image:
-      provider: missing
-      name: gpt-image-1.5
+      models:
+        image:
+          name: gpt-image-1.5
 `,
 		"invalid protocol": `
 mode: Transform
@@ -166,10 +158,9 @@ provider:
       base_url: https://openai.example.test
       api_key: openai-key
       protocol: responses
-  models:
-    image:
-      provider: openai
-      name: gpt-image-1.5
+      models:
+        image:
+          name: gpt-image-1.5
 `,
 		"empty model": `
 mode: Transform
@@ -179,10 +170,9 @@ provider:
       base_url: https://openai.example.test
       api_key: openai-key
       protocol: openai
-  models:
-    image:
-      provider: openai
-      name: ""
+      models:
+        image:
+          name: ""
 `,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -197,13 +187,15 @@ func TestLoadFromYAMLRejectsInvalidWebSearchSupport(t *testing.T) {
 	_, err := config.LoadFromYAML([]byte(`
 mode: Transform
 provider:
-  base_url: https://provider.example.test
-  api_key: upstream-key
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        moonbridge:
+          name: claude-test
   web_search:
     support: sometimes
-  models:
-    moonbridge:
-      name: claude-test
 `))
 	if err == nil {
 		t.Fatal("LoadFromYAML() error = nil, want invalid web search support error")
@@ -235,11 +227,13 @@ func TestLoadFromYAMLRejectsInvalidCacheTTL(t *testing.T) {
 	_, err := config.LoadFromYAML([]byte(`
 mode: Transform
 provider:
-  base_url: https://provider.example.test
-  api_key: upstream-key
-  models:
-    gpt-test:
-      name: claude-test
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        gpt-test:
+          name: claude-test
 cache:
   ttl: 24h
 `))
@@ -252,11 +246,13 @@ func TestLoadFromYAMLRejectsEmptyModelMapping(t *testing.T) {
 	_, err := config.LoadFromYAML([]byte(`
 mode: Transform
 provider:
-  base_url: https://provider.example.test
-  api_key: upstream-key
-  models:
-    moonbridge:
-      name: ""
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        moonbridge:
+          name: ""
 `))
 	if err == nil {
 		t.Fatal("LoadFromYAML() error = nil, want empty model mapping error")
@@ -271,11 +267,13 @@ mode: Transform
 server:
   addr: 127.0.0.1:9999
 provider:
-  base_url: https://provider.example.test
-  api_key: upstream-key
-  models:
-    moonbridge:
-      name: claude-test
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        moonbridge:
+          name: claude-test
 cache:
   mode: off
 `), 0o600); err != nil {

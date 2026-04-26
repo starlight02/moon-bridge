@@ -132,6 +132,21 @@ func (s *SessionStats) CacheHitRate() float64 {
 	return float64(s.totalCacheRead) / float64(totalInput) * 100
 }
 
+// CacheWriteRate returns the cache write (creation) rate as a percentage.
+func (s *SessionStats) CacheWriteRate() float64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	totalInput := s.totalInputTokens + s.totalCacheCreation + s.totalCacheRead
+	if totalInput == 0 {
+		return 0
+	}
+	return float64(s.totalCacheCreation) / float64(totalInput) * 100
+}
+
 // Summary returns a summary of the session stats.
 func (s *SessionStats) Summary() Summary {
 	s.mu.RLock()
@@ -199,19 +214,53 @@ func (s Summary) LogValue() slog.Value {
 	return slog.GroupValue(attrs...)
 }
 
-func FormatUsageLine(model string, usage Usage, cacheHitRate float64, billing float64) string {
-	inputTokens := usage.InputTokens + usage.CacheReadInputTokens
-	return fmt.Sprintf("%s Usage: %.6f M Input, %.6f M Output, Session Cache Hit Rate: %.2f%%, Billing: %.2f CNY",
-		model,
-		float64(inputTokens)/1_000_000,
-		float64(usage.OutputTokens)/1_000_000,
-		cacheHitRate,
-		billing,
+// UsageLineParams holds all data needed to format a per-request usage log block.
+type UsageLineParams struct {
+	RequestModel string
+	ActualModel  string
+	Usage        Usage
+	RequestCost  float64
+	TotalCost    float64
+	CacheHitRate  float64
+	CacheWriteRate float64
+}
+
+func FormatUsageLine(p UsageLineParams) string {
+	return fmt.Sprintf(
+		"Model: %s ➡️ %s\n"+
+			"Input: %.4f M Cache Read + %.4f M Cache Write + %.4f M Fresh\n"+
+			"Output: %.4f M\n"+
+			"Request Billing: %.4f CNY, Total Billing: %.4f CNY\n"+
+			"Current Cache Hit Rate: %.2f%%, Current Cache Write Rate: %.2f%%",
+		p.RequestModel, p.ActualModel,
+		float64(p.Usage.CacheReadInputTokens)/1_000_000,
+		float64(p.Usage.CacheCreationInputTokens)/1_000_000,
+		float64(p.Usage.InputTokens)/1_000_000,
+		float64(p.Usage.OutputTokens)/1_000_000,
+		p.RequestCost, p.TotalCost,
+		p.CacheHitRate, p.CacheWriteRate,
 	)
 }
 
 func FormatSummaryLine(s Summary) string {
 	return fmt.Sprintf("Summary：Session Cache Hit Rate(AVG): %.1f%%, Billing: %.2f CNY", s.CacheHitRate, s.TotalCost)
+}
+
+// ErrorLineParams holds data needed to format a per-request error log block.
+type ErrorLineParams struct {
+	RequestModel string
+	ActualModel  string
+	StatusCode   int
+	Message      string
+}
+
+func FormatErrorLine(p ErrorLineParams) string {
+	return fmt.Sprintf(
+		"Model: %s \u27a1\ufe0f %s\n"+
+			"Raw Status Code: %d, Raw Error Message: %s",
+		p.RequestModel, p.ActualModel,
+		p.StatusCode, p.Message,
+	)
 }
 
 // WriteSummary writes a human-readable summary to the writer.

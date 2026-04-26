@@ -17,7 +17,7 @@ Transform 模式下，以下 OpenAI Responses 请求字段被支持：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `model` | `string` | 必需。会通过 `provider.models` 路由到上游 Provider，并映射为上游真实模型名 |
+| `model` | `string` | 必需。会通过 `provider.providers.<key>.models` 路由到上游 Provider，并映射为上游真实模型名 |
 | `input` | `string` 或 `array` | 消息输入，详见下文 |
 | `instructions` | `string` | 开发者/系统指令，转为 Anthropic system 块的前缀 |
 | `max_output_tokens` | `int` | 默认值由 `provider.default_max_tokens` 控制（最终 fallback 1024）|
