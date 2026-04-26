@@ -40,7 +40,8 @@ func (provider *fakeProvider) CreateMessage(_ context.Context, request anthropic
 	}, nil
 }
 
-func (provider *fakeProvider) StreamMessage(context.Context, anthropic.MessageRequest) (anthropic.Stream, error) {
+func (provider *fakeProvider) StreamMessage(_ context.Context, request anthropic.MessageRequest) (anthropic.Stream, error) {
+	provider.request = request
 	return &sliceStream{events: provider.streamEvents}, nil
 }
 
@@ -259,6 +260,72 @@ func TestResponsesHandlerStreamsOpenAIEvents(t *testing.T) {
 	}
 	if !bytes.Contains(recorder.Body.Bytes(), []byte("event: response.output_text.delta")) {
 		t.Fatalf("stream body = %s", recorder.Body.String())
+	}
+}
+
+func TestResponsesHandlerReusesCodexSessionForDeepSeekThinking(t *testing.T) {
+	provider := &fakeProvider{
+		streamEvents: []anthropic.StreamEvent{
+			{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant"}},
+			{Type: "content_block_start", Index: 0, ContentBlock: &anthropic.ContentBlock{Type: "thinking"}},
+			{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "thinking_delta", Thinking: "inspect before listing"}},
+			{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "signature_delta", Signature: "sig_1"}},
+			{Type: "content_block_stop", Index: 0},
+			{Type: "content_block_start", Index: 1, ContentBlock: &anthropic.ContentBlock{Type: "tool_use", ID: "call_ls", Name: "exec_command", Input: json.RawMessage(`{}`)}},
+			{Type: "content_block_delta", Index: 1, Delta: anthropic.StreamDelta{Type: "input_json_delta", PartialJSON: `{"cmd":"ls"}`}},
+			{Type: "content_block_stop", Index: 1},
+			{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "tool_use"}},
+			{Type: "message_stop"},
+		},
+	}
+	handler := server.New(server.Config{
+		Bridge: bridge.New(config.Config{
+			DeepSeekV4:       true,
+			DefaultMaxTokens: 1024,
+			ModelMap:         map[string]string{"gpt-test": "deepseek-v4-pro"},
+			Cache:            config.CacheConfig{Mode: "off"},
+		}, cache.NewMemoryRegistry()),
+		Provider: provider,
+	})
+
+	firstRequest := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"inspect","stream":true}`))
+	firstRequest.Header.Set("Session_id", "codex-session-1")
+	firstRecorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(firstRecorder, firstRequest)
+
+	if firstRecorder.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body = %s", firstRecorder.Code, firstRecorder.Body.String())
+	}
+
+	secondRequest := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{
+		"model":"gpt-test",
+		"input":[
+			{"role":"user","content":[{"type":"input_text","text":"inspect"}],"type":"message"},
+			{"arguments":"{\"cmd\":\"ls\"}","call_id":"call_ls","name":"exec_command","type":"function_call"},
+			{"call_id":"call_ls","output":"README.md\n","type":"function_call_output"}
+		]
+	}`))
+	secondRequest.Header.Set("Session_id", "codex-session-1")
+	secondRecorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(secondRecorder, secondRequest)
+
+	if secondRecorder.Code != http.StatusOK {
+		t.Fatalf("second status = %d, body = %s", secondRecorder.Code, secondRecorder.Body.String())
+	}
+	if len(provider.request.Messages) != 3 {
+		t.Fatalf("provider messages = %+v", provider.request.Messages)
+	}
+	assistant := provider.request.Messages[1]
+	if assistant.Role != "assistant" || len(assistant.Content) != 2 {
+		t.Fatalf("assistant message = %+v", assistant)
+	}
+	if assistant.Content[0].Type != "thinking" || assistant.Content[0].Thinking != "inspect before listing" || assistant.Content[0].Signature != "sig_1" {
+		t.Fatalf("thinking block = %+v", assistant.Content[0])
+	}
+	if assistant.Content[1].Type != "tool_use" || assistant.Content[1].ID != "call_ls" {
+		t.Fatalf("tool use block = %+v", assistant.Content[1])
 	}
 }
 

@@ -1,5 +1,5 @@
-// Package session manages per-request session state, isolating mutable state
-// such as DeepSeek V4 thinking caches across concurrent requests.
+// Package session manages request or client-session state, isolating mutable
+// state such as DeepSeek V4 thinking caches across unrelated requests.
 package session
 
 import (
@@ -10,16 +10,16 @@ import (
 	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 )
 
-// Session holds per-request state that should be isolated across concurrent
-// requests to avoid cross-session interference (e.g., thinking blocks from
-// one conversation leaking into another).
+// Session holds mutable state that should be isolated across unrelated
+// conversations (e.g., thinking blocks from one conversation leaking into
+// another).
 type Session struct {
 	ID        string
 	DeepSeek  *deepseekv4.State
 	CreatedAt time.Time
 }
 
-// New creates a new Session with a unique ID and initialised per-request state.
+// New creates a new Session with a unique ID and initialised state.
 func New() *Session {
 	id := make([]byte, 16)
 	_, _ = rand.Read(id)

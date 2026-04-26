@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/bridge"
@@ -44,7 +46,16 @@ type Server struct {
 	traceErrors io.Writer
 	stats       *stats.SessionStats
 	mux         *http.ServeMux
+	sessionsMu  sync.Mutex
+	sessions    map[string]serverSession
 }
+
+type serverSession struct {
+	sess     *session.Session
+	lastUsed time.Time
+}
+
+const sessionTTL = 24 * time.Hour
 
 func New(cfg Config) *Server {
 	server := &Server{
@@ -56,6 +67,7 @@ func New(cfg Config) *Server {
 		traceErrors: cfg.TraceErrors,
 		stats:       cfg.Stats,
 		mux:         http.NewServeMux(),
+		sessions:    map[string]serverSession{},
 	}
 	server.mux.HandleFunc("/v1/responses", server.handleResponses)
 	server.mux.HandleFunc("/responses", server.handleResponses)
@@ -79,8 +91,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 		return
 	}
 
-	// Create a per-request session for state isolation (e.g., DeepSeek thinking cache).
-	sess := session.New()
+	sess := server.sessionForRequest(request)
 
 	body, err := io.ReadAll(request.Body)
 	record := mbtrace.Record{HTTPRequest: mbtrace.NewHTTPRequest(request), OpenAIRequest: mbtrace.RawJSONOrString(body)}
@@ -252,6 +263,46 @@ func (server *Server) resolveProvider(modelAlias string, providerKey string) Pro
 		return server.provider
 	}
 	return nil
+}
+
+func (server *Server) sessionForRequest(request *http.Request) *session.Session {
+	key := sessionKeyFromRequest(request)
+	if key == "" {
+		return session.New()
+	}
+
+	now := time.Now()
+	server.sessionsMu.Lock()
+	defer server.sessionsMu.Unlock()
+
+	server.pruneSessionsLocked(now)
+	if entry, ok := server.sessions[key]; ok {
+		entry.lastUsed = now
+		server.sessions[key] = entry
+		return entry.sess
+	}
+
+	sess := session.NewWithID(key)
+	server.sessions[key] = serverSession{sess: sess, lastUsed: now}
+	return sess
+}
+
+func (server *Server) pruneSessionsLocked(now time.Time) {
+	for key, entry := range server.sessions {
+		if now.Sub(entry.lastUsed) > sessionTTL {
+			delete(server.sessions, key)
+		}
+	}
+}
+
+func sessionKeyFromRequest(request *http.Request) string {
+	if value := strings.TrimSpace(request.Header.Get("Session_id")); value != "" {
+		return "session:" + value
+	}
+	if value := strings.TrimSpace(request.Header.Get("X-Codex-Window-Id")); value != "" {
+		return "codex-window:" + value
+	}
+	return ""
 }
 
 func (server *Server) writeTrace(record mbtrace.Record) {
