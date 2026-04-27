@@ -38,15 +38,23 @@ New format:
     routes:
       moonbridge: "deepseek/deepseek-v4-pro"
 
-Old DeepSeek V4 extension format:
+Old DeepSeek V4 extension format (global):
   provider:
     deepseek_v4: true
 
-New DeepSeek V4 extension format:
+Intermediate format (provider-level, also migrated):
   provider:
     providers:
       deepseek:
         deepseek_v4: true
+
+New format (model-level):
+  provider:
+    providers:
+      deepseek:
+        models:
+          deepseek-v4-pro:
+            deepseek_v4: true
 
 Usage:
   python3 scripts/migrate_config.py                     # reads config.yml, writes config.yml
@@ -67,7 +75,11 @@ from ruamel.yaml import YAML
 
 def needs_migration(provider_block: dict) -> bool:
     """Return True if the provider block still has any obsolete shape."""
-    return "deepseek_v4" in provider_block or needs_model_migration(provider_block)
+    if "deepseek_v4" in provider_block:
+        return True
+    if needs_provider_level_deepseek_v4_migration(provider_block):
+        return True
+    return needs_model_migration(provider_block)
 
 
 def needs_model_migration(provider_block: dict) -> bool:
@@ -82,6 +94,17 @@ def needs_model_migration(provider_block: dict) -> bool:
         for mdef in models.values():
             if isinstance(mdef, dict) and "name" in mdef:
                 return True
+    return False
+
+
+def needs_provider_level_deepseek_v4_migration(provider_block: dict) -> bool:
+    """Return True if any provider still has deepseek_v4 at the provider level."""
+    providers = provider_block.get("providers")
+    if not providers:
+        return False
+    for pdef in providers.values():
+        if isinstance(pdef, dict) and "deepseek_v4" in pdef:
+            return True
     return False
 
 
@@ -111,14 +134,14 @@ def migrate(data: dict) -> dict:
         new_models: dict = {}
         for alias, mdef in old_models.items():
             if not isinstance(mdef, dict):
-                # Bare value or empty — treat alias as upstream name.
+                # Bare value or empty -- treat alias as upstream name.
                 new_models[alias] = mdef
                 routes[alias] = f"{provider_key}/{alias}"
                 continue
 
             upstream_name = mdef.pop("name", None)
             if not upstream_name:
-                # No "name" field — alias IS the upstream name (already new format).
+                # No "name" field -- alias IS the upstream name (already new format).
                 new_models[alias] = mdef
                 routes[alias] = f"{provider_key}/{alias}"
                 continue
@@ -150,26 +173,60 @@ def migrate(data: dict) -> dict:
 
 
 def migrate_deepseek_v4(provider_block: dict, providers: dict) -> None:
-    """Move provider.deepseek_v4 to provider.providers.<key>.deepseek_v4."""
-    if "deepseek_v4" not in provider_block:
-        return
+    """Migrate deepseek_v4 from global/provider level to model level.
 
-    enabled = boolish(provider_block.pop("deepseek_v4"))
-    if not enabled:
-        return
+    Handles three source locations:
+    1. provider.deepseek_v4 (global, oldest format)
+    2. provider.providers.<key>.deepseek_v4 (intermediate format)
+    Both are migrated to provider.providers.<key>.models.<name>.deepseek_v4.
+    """
+    # Step 1: Collect provider keys that should have deepseek_v4 enabled.
+    enabled_provider_keys: set[str] = set()
 
-    keys = deepseek_provider_candidates(providers)
-    if not keys:
-        print(
-            "Warning: provider.deepseek_v4 was true, but no DeepSeek-like "
-            "provider could be identified. Add deepseek_v4: true under the "
-            "right provider manually.",
-            file=sys.stderr,
-        )
-        return
+    # From global level.
+    if "deepseek_v4" in provider_block:
+        enabled = boolish(provider_block.pop("deepseek_v4"))
+        if enabled:
+            keys = deepseek_provider_candidates(providers)
+            if not keys:
+                print(
+                    "Warning: provider.deepseek_v4 was true, but no DeepSeek-like "
+                    "provider could be identified. Add deepseek_v4: true under the "
+                    "right model entries manually.",
+                    file=sys.stderr,
+                )
+            else:
+                enabled_provider_keys.update(keys)
 
-    for key in keys:
-        providers[key]["deepseek_v4"] = True
+    # From provider level.
+    for key, pdef in providers.items():
+        if not isinstance(pdef, dict):
+            continue
+        if "deepseek_v4" in pdef:
+            enabled = boolish(pdef.pop("deepseek_v4"))
+            if enabled:
+                enabled_provider_keys.add(key)
+
+    # Step 2: Push deepseek_v4 down to each model under the enabled providers.
+    for key in enabled_provider_keys:
+        pdef = providers.get(key)
+        if not isinstance(pdef, dict):
+            continue
+        models = pdef.get("models")
+        if not models:
+            print(
+                f"Warning: deepseek_v4 enabled for provider {key!r}, but it has "
+                f"no models defined. Add deepseek_v4: true to model entries manually.",
+                file=sys.stderr,
+            )
+            continue
+        for model_name, mdef in models.items():
+            if mdef is None:
+                models[model_name] = {"deepseek_v4": True}
+            elif isinstance(mdef, dict):
+                if "deepseek_v4" not in mdef:
+                    mdef["deepseek_v4"] = True
+            # else: scalar value, skip (unusual)
 
 
 def deepseek_provider_candidates(providers: dict) -> list[str]:
