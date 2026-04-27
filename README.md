@@ -49,11 +49,17 @@ provider:
       base_url: "https://api.deepseek.com"
       api_key: "replace-with-deepseek-api-key"
       version: "2023-06-01"
-      deepseek_v4: true
       models:
         deepseek-v4-pro:
           context_window: 200000
           max_output_tokens: 100000
+          deepseek_v4: true
+          default_reasoning_level: "high"
+          supported_reasoning_levels:
+            - effort: "high"
+              description: "High reasoning effort"
+            - effort: "max"
+              description: "Max reasoning effort"
     openai:
       base_url: "https://api.openai.com"
       api_key: "replace-with-openai-api-key"
@@ -126,9 +132,17 @@ provider:
     deepseek:
       base_url: "https://api.deepseek.com"
       api_key: "replace-with-deepseek-api-key"
-      deepseek_v4: true
       web_search:
         support: "disabled" # DeepSeek 不支持 Anthropic server tool
+      models:
+        deepseek-v4-pro:
+          deepseek_v4: true
+          default_reasoning_level: "high"
+          supported_reasoning_levels:
+            - effort: "high"
+              description: "High reasoning effort"
+            - effort: "max"
+              description: "Max reasoning effort"
 
   # 全局回退默认值（未在 provider 级别配置时使用）
   web_search:
@@ -138,7 +152,7 @@ provider:
 
 ### DeepSeek V4 扩展
 
-在具体 Provider 下设置 `deepseek_v4: true` 可启用 DeepSeek V4 专用兼容逻辑，包括 reasoning_content 剥离与重注入、reasoning_effort → thinking 映射、推理输出展示等。该开关按路由后的 provider 生效，因此同一进程中可以同时路由 DeepSeek、Anthropic 和 OpenAI provider。详见 [docs/deepseek-v4.md](docs/deepseek-v4.md)。
+在具体 Provider 模型下设置 `deepseek_v4: true` 可启用 DeepSeek V4 专用兼容逻辑，包括 reasoning_content 剥离与重注入、thinking 回放、推理输出展示等。推理档位使用与其他模型相同的 `default_reasoning_level` / `supported_reasoning_levels` 元数据表达；Transform 会把请求里的 `reasoning.effort` 映射到 DeepSeek Anthropic 兼容参数 `output_config.effort`。详见 [docs/deepseek-v4.md](docs/deepseek-v4.md)。
 
 ### 调试抓包
 

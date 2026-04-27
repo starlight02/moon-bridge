@@ -58,30 +58,38 @@ func TestInjectReasoningIntoOutput(t *testing.T) {
 	}
 }
 
-func TestToAnthropicRequestClearsTemperatureAndMapsEffort(t *testing.T) {
+func TestToAnthropicRequestClearsTemperatureAndTopP(t *testing.T) {
 	f := 0.5
 	req := anthropic.MessageRequest{Temperature: &f, TopP: &f, MaxTokens: 1000}
-	ToAnthropicRequest(&req, map[string]any{"effort": "low"})
+	ToAnthropicRequest(&req, nil)
 	if req.Temperature != nil || req.TopP != nil {
 		t.Fatal("expected temperature and top_p to be cleared")
 	}
-	if req.Thinking == nil || req.Thinking.Type != "enabled" || req.Thinking.BudgetTokens != 500 {
-		t.Fatalf("unexpected thinking config: %+v", req.Thinking)
-	}
-}
-
-func TestToAnthropicRequestMapsHighToMax(t *testing.T) {
-	req := anthropic.MessageRequest{MaxTokens: 1000}
-	ToAnthropicRequest(&req, map[string]any{"effort": "high"})
-	if req.Thinking == nil || req.Thinking.BudgetTokens != 750 {
-		t.Fatalf("unexpected thinking config: %+v", req.Thinking)
-	}
-}
-
-func TestToAnthropicRequestNoReasoning(t *testing.T) {
-	req := anthropic.MessageRequest{MaxTokens: 1000}
-	ToAnthropicRequest(&req, nil)
 	if req.Thinking != nil {
-		t.Fatalf("expected no thinking config, got %+v", req.Thinking)
+		t.Fatalf("expected no thinking mapping, got %+v", req.Thinking)
+	}
+}
+
+func TestToAnthropicRequestMapsReasoningEffort(t *testing.T) {
+	for _, effort := range []string{"high", "max"} {
+		req := anthropic.MessageRequest{Model: "deepseek-v4-pro"}
+		ToAnthropicRequest(&req, map[string]any{"effort": effort})
+		if req.Model != "deepseek-v4-pro" {
+			t.Fatalf("Model = %q", req.Model)
+		}
+		if req.OutputConfig == nil || req.OutputConfig.Effort != effort {
+			t.Fatalf("OutputConfig = %+v, want effort %q", req.OutputConfig, effort)
+		}
+		if req.Thinking != nil {
+			t.Fatalf("expected no thinking mapping, got %+v", req.Thinking)
+		}
+	}
+}
+
+func TestToAnthropicRequestIgnoresUnsupportedReasoningEffort(t *testing.T) {
+	req := anthropic.MessageRequest{Model: "deepseek-v4-pro"}
+	ToAnthropicRequest(&req, map[string]any{"effort": "medium"})
+	if req.OutputConfig != nil {
+		t.Fatalf("OutputConfig = %+v, want nil", req.OutputConfig)
 	}
 }

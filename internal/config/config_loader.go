@@ -58,24 +58,24 @@ type ProviderModelFileConfig struct {
 	MaxOutputTokens int                    `yaml:"max_output_tokens"`
 	Pricing         ModelPricingFileConfig `yaml:"pricing"`
 	// Codex model catalog metadata (injected into /v1/models responses).
-	DisplayName              string                          `yaml:"display_name"`
-	Description              string                          `yaml:"description"`
-	DefaultReasoningLevel    string                          `yaml:"default_reasoning_level"`
-	SupportedReasoningLevels []ReasoningLevelPresetFileConfig `yaml:"supported_reasoning_levels"`
-	SupportsReasoningSummaries *bool                          `yaml:"supports_reasoning_summaries"`
-	DefaultReasoningSummary  string                          `yaml:"default_reasoning_summary"`
-	WebSearch                WebSearchFileConfig             `yaml:"web_search"`
-	DeepSeekV4               bool                            `yaml:"deepseek_v4"`
+	DisplayName                string                           `yaml:"display_name"`
+	Description                string                           `yaml:"description"`
+	DefaultReasoningLevel      string                           `yaml:"default_reasoning_level"`
+	SupportedReasoningLevels   []ReasoningLevelPresetFileConfig `yaml:"supported_reasoning_levels"`
+	SupportsReasoningSummaries *bool                            `yaml:"supports_reasoning_summaries"`
+	DefaultReasoningSummary    string                           `yaml:"default_reasoning_summary"`
+	WebSearch                  WebSearchFileConfig              `yaml:"web_search"`
+	DeepSeekV4                 bool                             `yaml:"deepseek_v4"`
 }
 
 type ProviderDefFileConfig struct {
-	BaseURL    string                             `yaml:"base_url"`
-	APIKey     string                             `yaml:"api_key"`
-	Version    string                             `yaml:"version"`
-	UserAgent  string                             `yaml:"user_agent"`
-	Protocol   string                             `yaml:"protocol"`
-	WebSearch  WebSearchFileConfig                `yaml:"web_search"`
-	Models     map[string]ProviderModelFileConfig `yaml:"models"`
+	BaseURL   string                             `yaml:"base_url"`
+	APIKey    string                             `yaml:"api_key"`
+	Version   string                             `yaml:"version"`
+	UserAgent string                             `yaml:"user_agent"`
+	Protocol  string                             `yaml:"protocol"`
+	WebSearch WebSearchFileConfig                `yaml:"web_search"`
+	Models    map[string]ProviderModelFileConfig `yaml:"models"`
 }
 
 type ModelPricingFileConfig struct {
@@ -123,7 +123,6 @@ type LogFileConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
 }
-
 
 func LoadFromFile(path string) (Config, error) {
 	data, err := os.ReadFile(path)
@@ -276,11 +275,11 @@ func buildRoutes(rawRoutes map[string]string, providerDefs map[string]ProviderDe
 				entry.Description = meta.Description
 				entry.DefaultReasoningLevel = meta.DefaultReasoningLevel
 				entry.SupportedReasoningLevels = meta.SupportedReasoningLevels
-			entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
-			entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
-			entry.WebSearch = meta.WebSearch
-			entry.DeepSeekV4 = meta.DeepSeekV4
-		}
+				entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
+				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
+				entry.WebSearch = meta.WebSearch
+				entry.DeepSeekV4 = meta.DeepSeekV4
+			}
 		}
 		routes[trimmedAlias] = entry
 	}
@@ -322,22 +321,22 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 				DisplayName:                strings.TrimSpace(m.DisplayName),
 				Description:                strings.TrimSpace(m.Description),
 				DefaultReasoningLevel:      strings.TrimSpace(m.DefaultReasoningLevel),
-			SupportsReasoningSummaries: boolOrDefault(m.SupportsReasoningSummaries, false),
-			DefaultReasoningSummary:    strings.TrimSpace(m.DefaultReasoningSummary),
-		}
-		// Parse model-level web_search config.
-		if m.WebSearch.Support != "" {
-			modelWS, _ := parseWebSearchSupport(m.WebSearch.Support)
-			meta.WebSearch = WebSearchConfig{
-				Support:         modelWS,
-				MaxUses:         m.WebSearch.MaxUses,
-				TavilyAPIKey:    strings.TrimSpace(m.WebSearch.TavilyAPIKey),
-				FirecrawlAPIKey: strings.TrimSpace(m.WebSearch.FirecrawlAPIKey),
-				SearchMaxRounds: m.WebSearch.SearchMaxRounds,
+				SupportsReasoningSummaries: boolOrDefault(m.SupportsReasoningSummaries, false),
+				DefaultReasoningSummary:    strings.TrimSpace(m.DefaultReasoningSummary),
 			}
-		}
-		meta.DeepSeekV4 = m.DeepSeekV4
-		for _, preset := range m.SupportedReasoningLevels {
+			// Parse model-level web_search config.
+			if m.WebSearch.Support != "" {
+				modelWS, _ := parseWebSearchSupport(m.WebSearch.Support)
+				meta.WebSearch = WebSearchConfig{
+					Support:         modelWS,
+					MaxUses:         m.WebSearch.MaxUses,
+					TavilyAPIKey:    strings.TrimSpace(m.WebSearch.TavilyAPIKey),
+					FirecrawlAPIKey: strings.TrimSpace(m.WebSearch.FirecrawlAPIKey),
+					SearchMaxRounds: m.WebSearch.SearchMaxRounds,
+				}
+			}
+			meta.DeepSeekV4 = m.DeepSeekV4
+			for _, preset := range m.SupportedReasoningLevels {
 				meta.SupportedReasoningLevels = append(meta.SupportedReasoningLevels, ReasoningLevelPreset{
 					Effort:      strings.TrimSpace(preset.Effort),
 					Description: strings.TrimSpace(preset.Description),

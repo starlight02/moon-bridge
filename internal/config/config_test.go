@@ -118,6 +118,12 @@ provider:
       models:
         deepseek-v4-pro:
           deepseek_v4: true
+          default_reasoning_level: high
+          supported_reasoning_levels:
+            - effort: high
+              description: High reasoning effort
+            - effort: max
+              description: Max reasoning effort
     openai:
       base_url: https://openai.example.test
       api_key: openai-key
@@ -139,6 +145,12 @@ provider:
 	}
 	if cfg.DeepSeekV4ForModel("image") {
 		t.Fatalf("DeepSeekV4ForModel(image) = true, want false")
+	}
+	if cfg.RouteFor("moonbridge").DefaultReasoningLevel != "high" {
+		t.Fatalf("RouteFor(moonbridge).DefaultReasoningLevel = %q", cfg.RouteFor("moonbridge").DefaultReasoningLevel)
+	}
+	if got := len(cfg.RouteFor("moonbridge").SupportedReasoningLevels); got != 2 {
+		t.Fatalf("RouteFor(moonbridge).SupportedReasoningLevels len = %d", got)
 	}
 	if got := cfg.ModelFor("image"); got != "gpt-image-1.5" {
 		t.Fatalf("ModelFor(image) = %q", got)

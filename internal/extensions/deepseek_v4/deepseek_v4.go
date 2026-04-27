@@ -129,60 +129,33 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// ToAnthropicRequest mutates an Anthropic request for DeepSeek V4 quirks:
-//   - Drop unsupported parameters (temperature, top_p) because DeepSeek
-//     ignores them and they can confuse some proxies.
-//   - Map reasoning_effort to DeepSeek thinking level: below "high" => "high",
-//     "high" and above => "max".
+// ToAnthropicRequest mutates an Anthropic request for DeepSeek V4 quirks.
+// DeepSeek-compatible providers may reject or mis-handle sampling knobs here.
+// Codex/OpenAI reasoning effort maps to DeepSeek's Anthropic-compatible
+// output_config.effort parameter.
 func ToAnthropicRequest(req *anthropic.MessageRequest, reasoning map[string]any) {
 	req.Temperature = nil
 	req.TopP = nil
-
-	level := extractReasoningEffort(reasoning)
-	if level == "" {
-		return
-	}
-	var thinkingLevel string
-	switch level {
-	case "low", "medium":
-		thinkingLevel = "high"
-	case "high", "maximum", "max":
-		thinkingLevel = "max"
-	default:
-		// Unknown values: treat as high if lexicographically less than "high",
-		// otherwise max.
-		if level < "high" {
-			thinkingLevel = "high"
-		} else {
-			thinkingLevel = "max"
-		}
-	}
-	req.Thinking = &anthropic.ThinkingConfig{
-		Type:         "enabled",
-		BudgetTokens: budgetForLevel(thinkingLevel, req.MaxTokens),
+	if effort, ok := reasoningEffort(reasoning); ok {
+		req.OutputConfig = &anthropic.OutputConfig{Effort: effort}
 	}
 }
-func extractReasoningEffort(reasoning map[string]any) string {
-	if reasoning == nil {
-		return ""
-	}
-	v, ok := reasoning["effort"].(string)
+
+func reasoningEffort(reasoning map[string]any) (string, bool) {
+	raw, ok := reasoning["effort"]
 	if !ok {
-		return ""
+		return "", false
 	}
-	return strings.ToLower(strings.TrimSpace(v))
-}
-
-func budgetForLevel(level string, maxTokens int) int {
-	if maxTokens <= 0 {
-		maxTokens = 4096
+	effort, ok := raw.(string)
+	if !ok {
+		return "", false
 	}
-	switch level {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
 	case "high":
-		return maxTokens / 2
+		return "high", true
 	case "max":
-		return maxTokens * 3 / 4
+		return "max", true
 	default:
-		return maxTokens / 2
+		return "", false
 	}
 }

@@ -272,7 +272,7 @@ func TestToAnthropicConvertsCodexNamespaceFunctionHistoryAndToolChoice(t *testin
 	}
 }
 
-func TestToAnthropicAppliesDeepSeekV4OnlyForRoutedProvider(t *testing.T) {
+func TestToAnthropicAppliesDeepSeekV4SamplingQuirksOnlyForRoutedProvider(t *testing.T) {
 	cfg := config.Config{
 		DefaultMaxTokens: 1024,
 		Routes: map[string]config.RouteEntry{
@@ -294,7 +294,7 @@ func TestToAnthropicAppliesDeepSeekV4OnlyForRoutedProvider(t *testing.T) {
 		Input:       json.RawMessage(`"hello"`),
 		Temperature: &temperature,
 		TopP:        &topP,
-		Reasoning:   map[string]any{"effort": "high"},
+		Reasoning:   map[string]any{"effort": "max"},
 	}
 
 	deepRequest := base
@@ -303,7 +303,8 @@ func TestToAnthropicAppliesDeepSeekV4OnlyForRoutedProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToAnthropic(deep) error = %v", err)
 	}
-	if deepConverted.Temperature != nil || deepConverted.TopP != nil || deepConverted.Thinking == nil {
+	if deepConverted.Model != "deepseek-v4-pro" || deepConverted.Temperature != nil || deepConverted.TopP != nil || deepConverted.Thinking != nil ||
+		deepConverted.OutputConfig == nil || deepConverted.OutputConfig.Effort != "max" {
 		t.Fatalf("deep request = %+v", deepConverted)
 	}
 
@@ -313,7 +314,8 @@ func TestToAnthropicAppliesDeepSeekV4OnlyForRoutedProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToAnthropic(claude) error = %v", err)
 	}
-	if claudeConverted.Temperature == nil || claudeConverted.TopP == nil || claudeConverted.Thinking != nil {
+	if claudeConverted.Temperature == nil || claudeConverted.TopP == nil ||
+		claudeConverted.Thinking != nil || claudeConverted.OutputConfig != nil {
 		t.Fatalf("claude request = %+v", claudeConverted)
 	}
 }

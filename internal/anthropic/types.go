@@ -22,6 +22,7 @@ type MessageRequest struct {
 	CacheControl  *CacheControl   `json:"cache_control,omitempty"`
 	Raw           json.RawMessage `json:"-"`
 	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
+	OutputConfig  *OutputConfig   `json:"output_config,omitempty"`
 }
 
 type Message struct {
@@ -129,4 +130,8 @@ type ErrorObject struct {
 type ThinkingConfig struct {
 	Type         string `json:"type,omitempty"`
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
+}
+
+type OutputConfig struct {
+	Effort string `json:"effort,omitempty"`
 }

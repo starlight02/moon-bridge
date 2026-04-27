@@ -60,11 +60,17 @@ provider:
       base_url: "https://api.deepseek.com"
       api_key: "replace-with-deepseek-api-key"
       version: "2023-06-01"
-      deepseek_v4: true
       models:
         deepseek-v4-pro:
           context_window: 1000000
           max_output_tokens: 384000
+          deepseek_v4: true
+          default_reasoning_level: "high"
+          supported_reasoning_levels:
+            - effort: "high"
+              description: "High reasoning effort"
+            - effort: "max"
+              description: "Max reasoning effort"
           pricing:
             input_price: 2
             output_price: 8
@@ -156,9 +162,9 @@ Web search 支持按 Provider 独立配置和判断。每个 Provider 可在 `pr
 
 ### DeepSeek V4 扩展
 
-当当前模型路由到的 Provider 配置 `deepseek_v4: true` 时，桥接器启用 DeepSeek thinking 状态扩展：
+当当前模型在 Provider 模型目录中配置 `deepseek_v4: true` 时，桥接器启用 DeepSeek thinking 状态扩展：
 
-- 处理 `reasoning_content` 剥离和 `reasoning_effort` → thinking 映射。
+- 处理 `reasoning_content` 剥离、thinking 回放和推理输出展示；推理强度使用标准 `reasoning.effort`，并写入 DeepSeek `output_config.effort`。
 - 流式 thinking delta 收集和 signature-only thinking block 保留。
 - thinking 状态按 Session 隔离，并发请求互不干扰。
 - 请求时移除 `temperature` / `top_p` 以适配 DeepSeek Provider。

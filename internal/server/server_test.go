@@ -264,6 +264,27 @@ func TestBuildModelInfosFromConfigIncludesProviderModelsBeforeRouteFallback(t *t
 	}
 }
 
+func TestBuildModelInfoPreservesReasoningLevelsForDeepSeekV4(t *testing.T) {
+	info := server.BuildModelInfoFromProviderModel("deepseek/deepseek-v4-pro", "deepseek", config.ModelMeta{
+		DeepSeekV4:            true,
+		DefaultReasoningLevel: "high",
+		SupportedReasoningLevels: []config.ReasoningLevelPreset{
+			{Effort: "high", Description: "High reasoning effort"},
+			{Effort: "max", Description: "Max reasoning effort"},
+		},
+	})
+
+	if info.DefaultReasoningLevel != "high" {
+		t.Fatalf("DefaultReasoningLevel = %q, want high", info.DefaultReasoningLevel)
+	}
+	if len(info.SupportedReasoningLevels) != 2 {
+		t.Fatalf("SupportedReasoningLevels = %+v, want two levels", info.SupportedReasoningLevels)
+	}
+	if info.SupportedReasoningLevels[0].Effort != "high" || info.SupportedReasoningLevels[1].Effort != "max" {
+		t.Fatalf("SupportedReasoningLevels = %+v", info.SupportedReasoningLevels)
+	}
+}
+
 func TestResponsesHandlerRejectsUnsupportedToolType(t *testing.T) {
 	handler := server.New(server.Config{
 		Bridge: bridge.New(config.Config{

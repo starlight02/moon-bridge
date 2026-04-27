@@ -25,7 +25,7 @@ func NewPlugin(isEnabled EnabledFunc) *DSPlugin {
 	return &DSPlugin{isEnabled: isEnabled}
 }
 
-func (p *DSPlugin) Name() string                    { return PluginName }
+func (p *DSPlugin) Name() string                      { return PluginName }
 func (p *DSPlugin) EnabledForModel(model string) bool { return p.isEnabled(model) }
 
 // --- InputPreprocessor ---
@@ -37,7 +37,11 @@ func (p *DSPlugin) PreprocessInput(_ *plugin.RequestContext, raw json.RawMessage
 // --- RequestMutator ---
 
 func (p *DSPlugin) MutateRequest(ctx *plugin.RequestContext, req *anthropic.MessageRequest) {
-	ToAnthropicRequest(req, ctx.Reasoning)
+	var reasoning map[string]any
+	if ctx != nil {
+		reasoning = ctx.Reasoning
+	}
+	ToAnthropicRequest(req, reasoning)
 }
 
 // --- MessageRewriter ---
@@ -156,14 +160,14 @@ func (p *DSPlugin) NewSessionState() any {
 
 // Compile-time interface checks.
 var (
-	_ plugin.Plugin              = (*DSPlugin)(nil)
-	_ plugin.InputPreprocessor   = (*DSPlugin)(nil)
-	_ plugin.RequestMutator      = (*DSPlugin)(nil)
-	_ plugin.MessageRewriter     = (*DSPlugin)(nil)
-	_ plugin.ContentFilter       = (*DSPlugin)(nil)
-	_ plugin.ContentRememberer   = (*DSPlugin)(nil)
-	_ plugin.StreamInterceptor   = (*DSPlugin)(nil)
-	_ plugin.ErrorTransformer    = (*DSPlugin)(nil)
+	_ plugin.Plugin               = (*DSPlugin)(nil)
+	_ plugin.InputPreprocessor    = (*DSPlugin)(nil)
+	_ plugin.RequestMutator       = (*DSPlugin)(nil)
+	_ plugin.MessageRewriter      = (*DSPlugin)(nil)
+	_ plugin.ContentFilter        = (*DSPlugin)(nil)
+	_ plugin.ContentRememberer    = (*DSPlugin)(nil)
+	_ plugin.StreamInterceptor    = (*DSPlugin)(nil)
+	_ plugin.ErrorTransformer     = (*DSPlugin)(nil)
 	_ plugin.SessionStateProvider = (*DSPlugin)(nil)
 	_ plugin.ThinkingPrepender    = (*DSPlugin)(nil)
 )
