@@ -314,6 +314,7 @@ func (pm *ProviderManager) ProviderKeyForModel(modelAlias string) string {
 }
 
 // SetResolvedWebSearch stores the resolved web search support for a provider key.
+// Also accepts model aliases for per-model resolution.
 func (pm *ProviderManager) SetResolvedWebSearch(key string, support string) {
 	pm.resolvedWS[key] = support
 }
@@ -325,8 +326,13 @@ func (pm *ProviderManager) ResolvedWebSearch(key string) string {
 }
 
 // ResolvedWebSearchForModel returns the resolved web search support for a model alias.
+// Checks model-level first, then falls back to provider-level.
 func (pm *ProviderManager) ResolvedWebSearchForModel(modelAlias string) string {
-	// ProviderKeyForModel already handles "provider/model" direct reference.
+	// Check model-level resolution first.
+	if v, ok := pm.resolvedWS["model:"+modelAlias]; ok {
+		return v
+	}
+	// Fall back to provider-level.
 	return pm.resolvedWS[pm.ProviderKeyForModel(modelAlias)]
 }
 

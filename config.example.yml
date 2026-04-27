@@ -37,6 +37,8 @@ provider:
               description: "Greater reasoning depth for complex problems"
           supports_reasoning_summaries: true
           default_reasoning_summary: "auto"
+          web_search:
+            support: "auto"  # model-level override (auto / enabled / disabled / injected)
           pricing:
             input_price: 2
             output_price: 8

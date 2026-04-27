@@ -64,6 +64,7 @@ type ProviderModelFileConfig struct {
 	SupportedReasoningLevels []ReasoningLevelPresetFileConfig `yaml:"supported_reasoning_levels"`
 	SupportsReasoningSummaries *bool                          `yaml:"supports_reasoning_summaries"`
 	DefaultReasoningSummary  string                          `yaml:"default_reasoning_summary"`
+	WebSearch                WebSearchFileConfig             `yaml:"web_search"`
 }
 
 type ProviderDefFileConfig struct {
@@ -275,9 +276,10 @@ func buildRoutes(rawRoutes map[string]string, providerDefs map[string]ProviderDe
 				entry.Description = meta.Description
 				entry.DefaultReasoningLevel = meta.DefaultReasoningLevel
 				entry.SupportedReasoningLevels = meta.SupportedReasoningLevels
-				entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
-				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
-			}
+			entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
+			entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
+			entry.WebSearch = meta.WebSearch
+		}
 		}
 		routes[trimmedAlias] = entry
 	}
@@ -319,10 +321,21 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 				DisplayName:                strings.TrimSpace(m.DisplayName),
 				Description:                strings.TrimSpace(m.Description),
 				DefaultReasoningLevel:      strings.TrimSpace(m.DefaultReasoningLevel),
-				SupportsReasoningSummaries: boolOrDefault(m.SupportsReasoningSummaries, false),
-				DefaultReasoningSummary:    strings.TrimSpace(m.DefaultReasoningSummary),
+			SupportsReasoningSummaries: boolOrDefault(m.SupportsReasoningSummaries, false),
+			DefaultReasoningSummary:    strings.TrimSpace(m.DefaultReasoningSummary),
+		}
+		// Parse model-level web_search config.
+		if m.WebSearch.Support != "" {
+			modelWS, _ := parseWebSearchSupport(m.WebSearch.Support)
+			meta.WebSearch = WebSearchConfig{
+				Support:         modelWS,
+				MaxUses:         m.WebSearch.MaxUses,
+				TavilyAPIKey:    strings.TrimSpace(m.WebSearch.TavilyAPIKey),
+				FirecrawlAPIKey: strings.TrimSpace(m.WebSearch.FirecrawlAPIKey),
+				SearchMaxRounds: m.WebSearch.SearchMaxRounds,
 			}
-			for _, preset := range m.SupportedReasoningLevels {
+		}
+		for _, preset := range m.SupportedReasoningLevels {
 				meta.SupportedReasoningLevels = append(meta.SupportedReasoningLevels, ReasoningLevelPreset{
 					Effort:      strings.TrimSpace(preset.Effort),
 					Description: strings.TrimSpace(preset.Description),

@@ -751,40 +751,36 @@ func (server *Server) resolveProvider(modelAlias string, providerKey string) Pro
 }
 
 // maybeWrapInjectedSearch wraps a client with the injected search orchestrator
-// if the resolved web search mode for this provider is "injected".
+// if the resolved web search mode for this model/provider is "injected".
 func (server *Server) maybeWrapInjectedSearch(client *anthropic.Client, modelAlias string, providerKey string) Provider {
-	key := providerKey
-	if key == "" && server.providerMgr != nil {
-		key = server.providerMgr.ProviderKeyForModel(modelAlias)
+	if server.providerMgr == nil {
+		return &anthropicClientWrapper{client: client}
 	}
-	if server.providerMgr != nil && server.providerMgr.ResolvedWebSearch(key) == "injected" {
-		tavilyKey := server.appConfig.WebSearchTavilyKeyForProvider(key)
-		firecrawlKey := server.appConfig.WebSearchFirecrawlKeyForProvider(key)
-		maxRounds := server.appConfig.WebSearchMaxRoundsForProvider(key)
-		logger.L().Debug("wrapping provider with injected search orchestrator", "provider", key)
+	resolved := server.providerMgr.ResolvedWebSearchForModel(modelAlias)
+	if resolved == "injected" {
+		tavilyKey := server.appConfig.WebSearchTavilyKeyForModel(modelAlias)
+		firecrawlKey := server.appConfig.WebSearchFirecrawlKeyForModel(modelAlias)
+		maxRounds := server.appConfig.WebSearchMaxRoundsForModel(modelAlias)
+		logger.L().Debug("wrapping with injected search orchestrator", "model", modelAlias)
 		return websearchinjected.WrapProvider(client, tavilyKey, firecrawlKey, maxRounds)
 	}
 	return &anthropicClientWrapper{client: client}
 }
 
 // resolveRequestOptions builds per-request bridge options based on the provider's
-// resolved web search support.
+// resolved web search support. Uses model-level resolution.
 func (server *Server) resolveRequestOptions(modelAlias string, providerKey string) bridge.RequestOptions {
 	if server.providerMgr == nil {
 		return bridge.RequestOptions{}
 	}
-	key := providerKey
-	if key == "" {
-		key = server.providerMgr.ProviderKeyForModel(modelAlias)
-	}
-	wsMode := server.providerMgr.ResolvedWebSearch(key)
+	wsMode := server.providerMgr.ResolvedWebSearchForModel(modelAlias)
 	if wsMode == "" {
 		return bridge.RequestOptions{}
 	}
 	return bridge.RequestOptions{
 		WebSearchMode:    wsMode,
-		WebSearchMaxUses: server.appConfig.WebSearchMaxUsesForProvider(key),
-		FirecrawlAPIKey:  server.appConfig.WebSearchFirecrawlKeyForProvider(key),
+		WebSearchMaxUses: server.appConfig.WebSearchMaxUsesForModel(modelAlias),
+		FirecrawlAPIKey:  server.appConfig.WebSearchFirecrawlKeyForModel(modelAlias),
 	}
 }
 

@@ -28,6 +28,15 @@ const (
 	WebSearchSupportInjected WebSearchSupport = "injected"
 )
 
+// WebSearchConfig holds web search settings that can be attached to a model or route.
+type WebSearchConfig struct {
+	Support         WebSearchSupport
+	MaxUses         int
+	TavilyAPIKey    string
+	FirecrawlAPIKey string
+	SearchMaxRounds int
+}
+
 type Config struct {
 	Mode              Mode
 	Addr              string
@@ -72,6 +81,8 @@ type RouteEntry struct {
 	SupportedReasoningLevels []ReasoningLevelPreset
 	SupportsReasoningSummaries bool
 	DefaultReasoningSummary  string
+	// WebSearch holds route-level web search config (overrides model and provider-level).
+	WebSearch WebSearchConfig
 }
 
 // ProviderDef defines a single upstream provider.
@@ -106,6 +117,8 @@ type ModelMeta struct {
 	SupportedReasoningLevels []ReasoningLevelPreset
 	SupportsReasoningSummaries bool
 	DefaultReasoningSummary  string
+	// WebSearch holds model-level web search config (overrides provider-level).
+	WebSearch WebSearchConfig
 }
 
 type ResponseProxyConfig struct {
@@ -368,16 +381,32 @@ func (cfg Config) WebSearchForProvider(providerKey string) WebSearchSupport {
 }
 
 // WebSearchForModel returns the resolved web search support for a given model alias.
+// Resolution order: route -> model (in provider catalog) -> provider -> global.
 func (cfg Config) WebSearchForModel(modelAlias string) WebSearchSupport {
+	// 1. Route-level override.
+	if route, ok := cfg.Routes[modelAlias]; ok {
+		if route.WebSearch.Support != "" {
+			return route.WebSearch.Support
+		}
+		// 2. Model-level override (from provider catalog).
+		if def, ok := cfg.ProviderDefs[route.Provider]; ok {
+			if meta, ok := def.Models[route.Model]; ok && meta.WebSearch.Support != "" {
+				return meta.WebSearch.Support
+			}
+		}
+		// 3. Provider-level.
+		if route.Provider != "" {
+			return cfg.WebSearchForProvider(route.Provider)
+		}
+	}
 	// Direct provider/model reference.
-	if provider, _ := ParseModelRef(modelAlias); provider != "" {
+	if provider, upstream := ParseModelRef(modelAlias); provider != "" {
+		if def, ok := cfg.ProviderDefs[provider]; ok {
+			if meta, ok := def.Models[upstream]; ok && meta.WebSearch.Support != "" {
+				return meta.WebSearch.Support
+			}
+		}
 		return cfg.WebSearchForProvider(provider)
-	}
-	if route, ok := cfg.Routes[modelAlias]; ok && route.Provider != "" {
-		return cfg.WebSearchForProvider(route.Provider)
-	}
-	if _, ok := cfg.ProviderDefs["default"]; ok {
-		return cfg.WebSearchForProvider("default")
 	}
 	return cfg.WebSearchSupport
 }
@@ -418,6 +447,78 @@ func (cfg Config) WebSearchMaxRoundsForProvider(providerKey string) int {
 		return cfg.SearchMaxRounds
 	}
 	return 5
+}
+
+// webSearchConfigForModel resolves the full WebSearchConfig for a model alias.
+// Resolution: route -> model catalog -> provider -> global.
+func (cfg Config) webSearchConfigForModel(modelAlias string) WebSearchConfig {
+	var providerKey string
+	var upstreamModel string
+	if route, ok := cfg.Routes[modelAlias]; ok {
+		if route.WebSearch.Support != "" {
+			return route.WebSearch
+		}
+		providerKey = route.Provider
+		upstreamModel = route.Model
+	} else if p, u := ParseModelRef(modelAlias); p != "" {
+		providerKey = p
+		upstreamModel = u
+	}
+	if providerKey != "" {
+		if def, ok := cfg.ProviderDefs[providerKey]; ok {
+			if meta, ok := def.Models[upstreamModel]; ok && meta.WebSearch.Support != "" {
+				return meta.WebSearch
+			}
+		}
+	}
+	return WebSearchConfig{}
+}
+
+// WebSearchMaxUsesForModel returns the max uses for a given model alias.
+func (cfg Config) WebSearchMaxUsesForModel(modelAlias string) int {
+	if ws := cfg.webSearchConfigForModel(modelAlias); ws.MaxUses > 0 {
+		return ws.MaxUses
+	}
+	providerKey := cfg.providerKeyForModel(modelAlias)
+	return cfg.WebSearchMaxUsesForProvider(providerKey)
+}
+
+// WebSearchTavilyKeyForModel returns the Tavily API key for a given model alias.
+func (cfg Config) WebSearchTavilyKeyForModel(modelAlias string) string {
+	if ws := cfg.webSearchConfigForModel(modelAlias); ws.TavilyAPIKey != "" {
+		return ws.TavilyAPIKey
+	}
+	providerKey := cfg.providerKeyForModel(modelAlias)
+	return cfg.WebSearchTavilyKeyForProvider(providerKey)
+}
+
+// WebSearchFirecrawlKeyForModel returns the Firecrawl API key for a given model alias.
+func (cfg Config) WebSearchFirecrawlKeyForModel(modelAlias string) string {
+	if ws := cfg.webSearchConfigForModel(modelAlias); ws.FirecrawlAPIKey != "" {
+		return ws.FirecrawlAPIKey
+	}
+	providerKey := cfg.providerKeyForModel(modelAlias)
+	return cfg.WebSearchFirecrawlKeyForProvider(providerKey)
+}
+
+// WebSearchMaxRoundsForModel returns the search max rounds for a given model alias.
+func (cfg Config) WebSearchMaxRoundsForModel(modelAlias string) int {
+	if ws := cfg.webSearchConfigForModel(modelAlias); ws.SearchMaxRounds > 0 {
+		return ws.SearchMaxRounds
+	}
+	providerKey := cfg.providerKeyForModel(modelAlias)
+	return cfg.WebSearchMaxRoundsForProvider(providerKey)
+}
+
+// providerKeyForModel returns the provider key for a model alias.
+func (cfg Config) providerKeyForModel(modelAlias string) string {
+	if route, ok := cfg.Routes[modelAlias]; ok {
+		return route.Provider
+	}
+	if p, _ := ParseModelRef(modelAlias); p != "" {
+		return p
+	}
+	return ""
 }
 
 func (cfg CacheConfig) Validate() error {

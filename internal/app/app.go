@@ -165,28 +165,24 @@ type webSearchProber interface {
 	ProbeWebSearch(context.Context, string) (bool, error)
 }
 
-// resolvePerProviderWebSearch probes each Anthropic-protocol provider for web_search
-// support and stores the resolved result in the ProviderManager.
+// resolvePerProviderWebSearch resolves web_search support for each provider and
+// each model that has a model-level override.
 func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *provider.ProviderManager, errors io.Writer) {
 	if pm == nil {
 		return
 	}
+	// 1. Resolve provider-level defaults.
 	for _, key := range pm.ProviderKeys() {
-		// Skip non-Anthropic providers (e.g. OpenAI protocol).
 		if pm.ProtocolForKey(key) != "anthropic" {
 			pm.SetResolvedWebSearch(key, "disabled")
 			logger.Info("web_search disabled for non-anthropic provider", "provider", key)
 			continue
 		}
-
-		// Resolve the effective config: per-provider override > global.
 		support := cfg.WebSearchForProvider(key)
-
 		switch support {
 		case config.WebSearchSupportDisabled:
 			pm.SetResolvedWebSearch(key, "disabled")
 			logger.Info("web_search disabled by config", "provider", key)
-			fmt.Fprintf(errors, "web_search disabled for provider %s\n", key)
 		case config.WebSearchSupportEnabled:
 			pm.SetResolvedWebSearch(key, "enabled")
 			logger.Info("web_search forced enabled by config", "provider", key)
@@ -194,9 +190,32 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 			pm.SetResolvedWebSearch(key, "injected")
 			logger.Info("web_search injected mode enabled", "provider", key)
 		default:
-			// Auto: probe the provider.
 			resolved := probeProviderWebSearch(ctx, key, pm, errors)
 			pm.SetResolvedWebSearch(key, resolved)
+		}
+	}
+	// 2. Resolve model-level overrides for routes that have their own web_search config.
+	for alias, route := range cfg.Routes {
+		modelWS := cfg.WebSearchForModel(alias)
+		providerWS := cfg.WebSearchForProvider(route.Provider)
+		if modelWS == providerWS {
+			continue // no model-level override, provider resolution applies
+		}
+		modelKey := "model:" + alias
+		switch modelWS {
+		case config.WebSearchSupportDisabled:
+			pm.SetResolvedWebSearch(modelKey, "disabled")
+			logger.Info("web_search disabled by model config", "model", alias)
+		case config.WebSearchSupportEnabled:
+			pm.SetResolvedWebSearch(modelKey, "enabled")
+			logger.Info("web_search forced enabled by model config", "model", alias)
+		case config.WebSearchSupportInjected:
+			pm.SetResolvedWebSearch(modelKey, "injected")
+			logger.Info("web_search injected mode by model config", "model", alias)
+		default:
+			// Auto: probe using this model's upstream name.
+			resolved := probeModelWebSearch(ctx, alias, pm, errors)
+			pm.SetResolvedWebSearch(modelKey, resolved)
 		}
 	}
 }
@@ -230,6 +249,30 @@ func probeProviderWebSearch(ctx context.Context, key string, pm *provider.Provid
 		return "disabled"
 	}
 	logger.Info("web_search supported by provider", "provider", key, "model", upstreamModel)
+	return "enabled"
+}
+
+// probeModelWebSearch probes a specific model alias for web_search support.
+func probeModelWebSearch(ctx context.Context, modelAlias string, pm *provider.ProviderManager, errors io.Writer) string {
+	upstreamModel, client, err := pm.ClientFor(modelAlias)
+	if err != nil {
+		logger.Warn("web_search model probe skipped: client not available", "model", modelAlias, "error", err)
+		return "disabled"
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
+	if err != nil {
+		logger.Warn("web_search model probe failed", "model", modelAlias, "error", err)
+		fmt.Fprintf(errors, "web_search model probe failed for %s: %v\n", modelAlias, err)
+		return "disabled"
+	}
+	if !supported {
+		logger.Warn("web_search unsupported by model", "model", modelAlias)
+		fmt.Fprintf(errors, "web_search unsupported by model %s\n", modelAlias)
+		return "disabled"
+	}
+	logger.Info("web_search supported by model", "model", modelAlias)
 	return "enabled"
 }
 
