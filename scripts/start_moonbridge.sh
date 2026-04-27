@@ -98,7 +98,7 @@ log "Moon Bridge log: ${LOG_FILE}"
 (
   cd "$ROOT_DIR"
   "$SERVER_BIN" --config "$CONFIG_FILE"
-) >> "$LOG_FILE" 2>&1 &
+) 2>&1 | tee -a "$LOG_FILE" &
 SERVER_PID="$!"
 
 # Wait for server.
