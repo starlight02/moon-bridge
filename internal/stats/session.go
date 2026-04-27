@@ -216,34 +216,48 @@ func (s Summary) LogValue() slog.Value {
 
 // UsageLineParams holds all data needed to format a per-request usage log block.
 type UsageLineParams struct {
-	RequestModel string
-	ActualModel  string
-	Usage        Usage
-	RequestCost  float64
-	TotalCost    float64
-	CacheHitRate  float64
+	RequestModel   string
+	ActualModel    string
+	Usage          Usage
+	RequestCost    float64
+	TotalCost      float64
+	CacheHitRate   float64
 	CacheWriteRate float64
 }
 
+// CacheRWRatio returns the cache read/write ratio (reads per write).
+// Returns 0 if no cache writes occurred.
+func CacheRWRatio(usage Usage) float64 {
+	if usage.CacheCreationInputTokens == 0 {
+		return 0
+	}
+	return float64(usage.CacheReadInputTokens) / float64(usage.CacheCreationInputTokens)
+}
+
 func FormatUsageLine(p UsageLineParams) string {
+	rwRatio := CacheRWRatio(p.Usage)
 	return fmt.Sprintf(
-		"Model: %s ➡️ %s\n"+
-			"Input: %.4f M Cache Read + %.4f M Cache Write + %.4f M Fresh\n"+
-			"Output: %.4f M\n"+
-			"Request Billing: %.4f CNY, Total Billing: %.4f CNY\n"+
-			"Current Cache Hit Rate: %.2f%%, Current Cache Write Rate: %.2f%%",
+		"模型: %s ➡️ %s\n"+
+			"输入: 读取 %.4f M + 写入 %.4f M + 首次 %.4f M\n"+
+			"输出: %.4f M\n"+
+			"计费: 本请求 %.4f 元, 累计 %.4f 元\n"+
+			"缓存: 命中率 %.2f%%, 写入率 %.2f%%, 读写比 %.2f",
 		p.RequestModel, p.ActualModel,
 		float64(p.Usage.CacheReadInputTokens)/1_000_000,
 		float64(p.Usage.CacheCreationInputTokens)/1_000_000,
 		float64(p.Usage.InputTokens)/1_000_000,
 		float64(p.Usage.OutputTokens)/1_000_000,
 		p.RequestCost, p.TotalCost,
-		p.CacheHitRate, p.CacheWriteRate,
+		p.CacheHitRate, p.CacheWriteRate, rwRatio,
 	)
 }
 
 func FormatSummaryLine(s Summary) string {
-	return fmt.Sprintf("Summary：Session Cache Hit Rate(AVG): %.1f%%, Billing: %.2f CNY", s.CacheHitRate, s.TotalCost)
+	rwRatio := float64(0)
+	if s.CacheCreation > 0 {
+		rwRatio = float64(s.CacheRead) / float64(s.CacheCreation)
+	}
+	return fmt.Sprintf("统计：平均缓存命中率 %.1f%%, 读写比 %.2f, 累计计费 %.2f 元", s.CacheHitRate, rwRatio, s.TotalCost)
 }
 
 // ErrorLineParams holds data needed to format a per-request error log block.
@@ -256,8 +270,8 @@ type ErrorLineParams struct {
 
 func FormatErrorLine(p ErrorLineParams) string {
 	return fmt.Sprintf(
-		"Model: %s \u27a1\ufe0f %s\n"+
-			"Raw Status Code: %d, Raw Error Message: %s",
+		"模型: %s ➡️ %s\n"+
+			"状态码: %d, 错误: %s",
 		p.RequestModel, p.ActualModel,
 		p.StatusCode, p.Message,
 	)
@@ -266,17 +280,24 @@ func FormatErrorLine(p ErrorLineParams) string {
 // WriteSummary writes a human-readable summary to the writer.
 func WriteSummary(w io.Writer, s Summary) {
 	fmt.Fprintln(w, FormatSummaryLine(s))
-	fmt.Fprintf(w, "Session Stats: %d requests, %s duration\n", s.Requests, s.Duration.Round(time.Second))
-	fmt.Fprintf(w, "  Input:  %d tokens (%d fresh, %d cache creation, %d cache read)\n",
+	fmt.Fprintf(w, "会话统计: %d 次请求, 耗时 %s\n", s.Requests, s.Duration.Round(time.Second))
+	fmt.Fprintf(w, "  输入: %d tokens (首次 %d, 缓存写入 %d, 缓存读取 %d)\n",
 		s.InputTokens+s.CacheCreation+s.CacheRead,
 		s.InputTokens,
 		s.CacheCreation,
 		s.CacheRead)
-	fmt.Fprintf(w, "  Output: %d tokens\n", s.OutputTokens)
+	fmt.Fprintf(w, "  输出: %d tokens\n", s.OutputTokens)
 	if s.CacheHitRate > 0 {
-		fmt.Fprintf(w, "  Cache Hit Rate: %.1f%% (saved %d tokens)\n", s.CacheHitRate, s.EffectiveInputSaved)
+		fmt.Fprintf(w, "  缓存命中率: %.1f%% (节省 %d tokens)\n", s.CacheHitRate, s.EffectiveInputSaved)
 	}
-	fmt.Fprintf(w, "  Total Cost: ¥%.6f\n", s.TotalCost)
+	rwRatio := float64(0)
+	if s.CacheCreation > 0 {
+		rwRatio = float64(s.CacheRead) / float64(s.CacheCreation)
+	}
+	if rwRatio > 0 {
+		fmt.Fprintf(w, "  缓存读写比: %.2f\n", rwRatio)
+	}
+	fmt.Fprintf(w, "  累计费用: ¥%.6f\n", s.TotalCost)
 	for model, ms := range s.ByModel {
 		if ms.Cost > 0 {
 			fmt.Fprintf(w, "    %s: ¥%.6f (%d req, %d in, %d out)\n",

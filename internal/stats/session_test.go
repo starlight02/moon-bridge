@@ -22,8 +22,9 @@ func TestWriteSummaryAlwaysIncludesTotalCost(t *testing.T) {
 	WriteSummary(&output, Summary{})
 
 	for _, want := range []string{
-		"Summary：Session Cache Hit Rate(AVG): 0.0%, Billing: 0.00 CNY",
-		"Total Cost:",
+		"统计：平均缓存命中率 0.0%",
+		"累计计费 0.00 元",
+		"累计费用:",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("summary missing %q: %s", want, output.String())
@@ -48,15 +49,16 @@ func TestFormatUsageLine(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"Model: moonbridge \u27a1\ufe0f deepseek-v4-pro",
-		"0.5000 M Cache Read",
-		"0.5000 M Cache Write",
-		"1.0000 M Fresh",
-		"Output: 0.2500 M",
-		"Request Billing: 6.7890 CNY",
-		"Total Billing: 12.3450 CNY",
-		"Current Cache Hit Rate: 25.00%",
-		"Current Cache Write Rate: 25.00%",
+		"模型: moonbridge ➡️ deepseek-v4-pro",
+		"读取 0.5000 M",
+		"写入 0.5000 M",
+		"首次 1.0000 M",
+		"输出: 0.2500 M",
+		"计费: 本请求 6.7890 元",
+		"累计 12.3450 元",
+		"命中率 25.00%",
+		"写入率 25.00%",
+		"读写比 1.00",
 	} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("usage line missing %q: %s", want, line)
