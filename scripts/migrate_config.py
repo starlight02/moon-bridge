@@ -23,6 +23,16 @@ New format:
         models:
           deepseek-v4-pro:       # upstream model name as key, no "name" field
             context_window: 1000000
+            display_name: "DeepSeek V4 Pro"
+            description: "Reasoning model with extended thinking."
+            default_reasoning_level: "medium"
+            supported_reasoning_levels:
+              - effort: "low"
+                description: "Fast responses with lighter reasoning"
+              - effort: "high"
+                description: "Greater reasoning depth"
+            supports_reasoning_summaries: true
+            default_reasoning_summary: "auto"
             pricing:
               input_price: 2
     routes:

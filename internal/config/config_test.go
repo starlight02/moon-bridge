@@ -253,6 +253,58 @@ func TestLoadFromYAMLRejectsInvalidMode(t *testing.T) {
 	}
 }
 
+func TestLoadFromYAMLParsesModelMetadata(t *testing.T) {
+	cfg, err := config.LoadFromYAML([]byte(`
+mode: Transform
+provider:
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        claude-test:
+          context_window: 200000
+          max_output_tokens: 100000
+          display_name: "Claude Test"
+          description: "A test model"
+          default_reasoning_level: "medium"
+          supported_reasoning_levels:
+            - effort: "low"
+              description: "Fast"
+            - effort: "high"
+              description: "Deep"
+          supports_reasoning_summaries: true
+          default_reasoning_summary: "auto"
+  routes:
+    gpt-test: "main/claude-test"
+`))
+	if err != nil {
+		t.Fatalf("LoadFromYAML() error = %v", err)
+	}
+	route := cfg.RouteFor("gpt-test")
+	if route.DisplayName != "Claude Test" {
+		t.Fatalf("DisplayName = %q", route.DisplayName)
+	}
+	if route.Description != "A test model" {
+		t.Fatalf("Description = %q", route.Description)
+	}
+	if route.DefaultReasoningLevel != "medium" {
+		t.Fatalf("DefaultReasoningLevel = %q", route.DefaultReasoningLevel)
+	}
+	if len(route.SupportedReasoningLevels) != 2 {
+		t.Fatalf("SupportedReasoningLevels len = %d", len(route.SupportedReasoningLevels))
+	}
+	if route.SupportedReasoningLevels[0].Effort != "low" || route.SupportedReasoningLevels[0].Description != "Fast" {
+		t.Fatalf("SupportedReasoningLevels[0] = %+v", route.SupportedReasoningLevels[0])
+	}
+	if !route.SupportsReasoningSummaries {
+		t.Fatal("SupportsReasoningSummaries = false")
+	}
+	if route.DefaultReasoningSummary != "auto" {
+		t.Fatalf("DefaultReasoningSummary = %q", route.DefaultReasoningSummary)
+	}
+}
+
 func TestLoadFromYAMLRequiresTransformProviderSettings(t *testing.T) {
 	_, err := config.LoadFromYAML([]byte(`mode: Transform`))
 	if err == nil {
@@ -432,4 +484,3 @@ developer:
 		t.Fatal("LoadFromYAML() error = nil, want unknown proxy addr error")
 	}
 }
-

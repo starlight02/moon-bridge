@@ -57,6 +57,13 @@ type ProviderModelFileConfig struct {
 	ContextWindow   int                    `yaml:"context_window"`
 	MaxOutputTokens int                    `yaml:"max_output_tokens"`
 	Pricing         ModelPricingFileConfig `yaml:"pricing"`
+	// Codex model catalog metadata (injected into /v1/models responses).
+	DisplayName              string                          `yaml:"display_name"`
+	Description              string                          `yaml:"description"`
+	DefaultReasoningLevel    string                          `yaml:"default_reasoning_level"`
+	SupportedReasoningLevels []ReasoningLevelPresetFileConfig `yaml:"supported_reasoning_levels"`
+	SupportsReasoningSummaries *bool                          `yaml:"supports_reasoning_summaries"`
+	DefaultReasoningSummary  string                          `yaml:"default_reasoning_summary"`
 }
 
 type ProviderDefFileConfig struct {
@@ -75,6 +82,12 @@ type ModelPricingFileConfig struct {
 	OutputPrice     float64 `yaml:"output_price"`
 	CacheWritePrice float64 `yaml:"cache_write_price"`
 	CacheReadPrice  float64 `yaml:"cache_read_price"`
+}
+
+// ReasoningLevelPresetFileConfig maps to Codex's ReasoningEffortPreset.
+type ReasoningLevelPresetFileConfig struct {
+	Effort      string `yaml:"effort"`
+	Description string `yaml:"description"`
 }
 
 type WebSearchFileConfig struct {
@@ -258,6 +271,12 @@ func buildRoutes(rawRoutes map[string]string, providerDefs map[string]ProviderDe
 				entry.OutputPrice = meta.OutputPrice
 				entry.CacheWritePrice = meta.CacheWritePrice
 				entry.CacheReadPrice = meta.CacheReadPrice
+				entry.DisplayName = meta.DisplayName
+				entry.Description = meta.Description
+				entry.DefaultReasoningLevel = meta.DefaultReasoningLevel
+				entry.SupportedReasoningLevels = meta.SupportedReasoningLevels
+				entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
+				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
 			}
 		}
 		routes[trimmedAlias] = entry
@@ -290,14 +309,26 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 		wsSupport, _ := parseWebSearchSupport(def.WebSearch.Support)
 		models := make(map[string]ModelMeta, len(def.Models))
 		for name, m := range def.Models {
-			models[strings.TrimSpace(name)] = ModelMeta{
-				ContextWindow:   m.ContextWindow,
-				MaxOutputTokens: m.MaxOutputTokens,
-				InputPrice:      m.Pricing.InputPrice,
-				OutputPrice:     m.Pricing.OutputPrice,
-				CacheWritePrice: m.Pricing.CacheWritePrice,
-				CacheReadPrice:  m.Pricing.CacheReadPrice,
+			meta := ModelMeta{
+				ContextWindow:              m.ContextWindow,
+				MaxOutputTokens:            m.MaxOutputTokens,
+				InputPrice:                 m.Pricing.InputPrice,
+				OutputPrice:                m.Pricing.OutputPrice,
+				CacheWritePrice:            m.Pricing.CacheWritePrice,
+				CacheReadPrice:             m.Pricing.CacheReadPrice,
+				DisplayName:                strings.TrimSpace(m.DisplayName),
+				Description:                strings.TrimSpace(m.Description),
+				DefaultReasoningLevel:      strings.TrimSpace(m.DefaultReasoningLevel),
+				SupportsReasoningSummaries: boolOrDefault(m.SupportsReasoningSummaries, false),
+				DefaultReasoningSummary:    strings.TrimSpace(m.DefaultReasoningSummary),
 			}
+			for _, preset := range m.SupportedReasoningLevels {
+				meta.SupportedReasoningLevels = append(meta.SupportedReasoningLevels, ReasoningLevelPreset{
+					Effort:      strings.TrimSpace(preset.Effort),
+					Description: strings.TrimSpace(preset.Description),
+				})
+			}
+			models[strings.TrimSpace(name)] = meta
 		}
 		pd := ProviderDef{
 			BaseURL:          strings.TrimRight(strings.TrimSpace(def.BaseURL), "/"),

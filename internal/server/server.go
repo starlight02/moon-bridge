@@ -89,10 +89,25 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 
 // ModelInfo represents a model entry in the OpenAI /v1/models response.
 type ModelInfo struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	OwnedBy string `json:"owned_by"`
+	ID                         string                    `json:"id"`
+	Object                     string                    `json:"object"`
+	Created                    int64                     `json:"created"`
+	OwnedBy                    string                    `json:"owned_by"`
+	Slug                       string                    `json:"slug,omitempty"`
+	DisplayName                string                    `json:"display_name,omitempty"`
+	Description                string                    `json:"description,omitempty"`
+	ContextWindow              int                       `json:"context_window,omitempty"`
+	MaxContextWindow            int                       `json:"max_context_window,omitempty"`
+	DefaultReasoningLevel      string                    `json:"default_reasoning_level,omitempty"`
+	SupportedReasoningLevels   []ReasoningLevelPresetDTO `json:"supported_reasoning_levels,omitempty"`
+	SupportsReasoningSummaries bool                      `json:"supports_reasoning_summaries,omitempty"`
+	DefaultReasoningSummary    string                    `json:"default_reasoning_summary,omitempty"`
+}
+
+// ReasoningLevelPresetDTO is the JSON shape Codex expects for reasoning presets.
+type ReasoningLevelPresetDTO struct {
+	Effort      string `json:"effort"`
+	Description string `json:"description"`
 }
 
 func (server *Server) handleModels(writer http.ResponseWriter, request *http.Request) {
@@ -124,18 +139,13 @@ func (server *Server) listModels() []ModelInfo {
 
 	// Direct "provider/upstream_model" entries from provider definitions first.
 	for providerKey, def := range server.appConfig.ProviderDefs {
-		for modelName := range def.Models {
+		for modelName, meta := range def.Models {
 			id := providerKey + "/" + modelName
 			if seen[id] {
 				continue
 			}
 			seen[id] = true
-			models = append(models, ModelInfo{
-				ID:      id,
-				Object:  "model",
-				Created: now,
-				OwnedBy: providerKey,
-			})
+			models = append(models, buildModelInfo(id, providerKey, now, meta))
 		}
 	}
 
@@ -149,12 +159,7 @@ func (server *Server) listModels() []ModelInfo {
 		if route.Provider != "" {
 			ownedBy = route.Provider
 		}
-		models = append(models, ModelInfo{
-			ID:      alias,
-			Object:  "model",
-			Created: now,
-			OwnedBy: ownedBy,
-		})
+		models = append(models, buildModelInfoFromRoute(alias, ownedBy, now, route))
 	}
 
 	return models
@@ -768,4 +773,64 @@ func (server *Server) resolveRequestOptions(modelAlias string, providerKey strin
 		WebSearchMaxUses: server.appConfig.WebSearchMaxUsesForProvider(key),
 		FirecrawlAPIKey:  server.appConfig.WebSearchFirecrawlKeyForProvider(key),
 	}
+}
+
+func buildModelInfo(id string, ownedBy string, created int64, meta config.ModelMeta) ModelInfo {
+	displayName := meta.DisplayName
+	if displayName == "" {
+		modelName := id
+		if i := strings.Index(id, "/"); i >= 0 {
+			modelName = id[i+1:]
+		}
+		displayName = modelName + " (" + ownedBy + ")"
+	}
+	info := ModelInfo{
+		ID:                         id,
+		Object:                     "model",
+		Created:                    created,
+		OwnedBy:                    ownedBy,
+		Slug:                       id,
+		DisplayName:                displayName,
+		Description:                meta.Description,
+		ContextWindow:              meta.ContextWindow,
+		MaxContextWindow:           meta.ContextWindow,
+		DefaultReasoningLevel:      meta.DefaultReasoningLevel,
+		SupportsReasoningSummaries: meta.SupportsReasoningSummaries,
+		DefaultReasoningSummary:    meta.DefaultReasoningSummary,
+	}
+	for _, preset := range meta.SupportedReasoningLevels {
+		info.SupportedReasoningLevels = append(info.SupportedReasoningLevels, ReasoningLevelPresetDTO{
+			Effort:      preset.Effort,
+			Description: preset.Description,
+		})
+	}
+	return info
+}
+
+func buildModelInfoFromRoute(alias string, ownedBy string, created int64, route config.RouteEntry) ModelInfo {
+	displayName := route.DisplayName
+	if displayName == "" {
+		displayName = alias + " (" + ownedBy + ")"
+	}
+	info := ModelInfo{
+		ID:                         alias,
+		Object:                     "model",
+		Created:                    created,
+		OwnedBy:                    ownedBy,
+		Slug:                       alias,
+		DisplayName:                displayName,
+		Description:                route.Description,
+		ContextWindow:              route.ContextWindow,
+		MaxContextWindow:           route.ContextWindow,
+		DefaultReasoningLevel:      route.DefaultReasoningLevel,
+		SupportsReasoningSummaries: route.SupportsReasoningSummaries,
+		DefaultReasoningSummary:    route.DefaultReasoningSummary,
+	}
+	for _, preset := range route.SupportedReasoningLevels {
+		info.SupportedReasoningLevels = append(info.SupportedReasoningLevels, ReasoningLevelPresetDTO{
+			Effort:      preset.Effort,
+			Description: preset.Description,
+		})
+	}
+	return info
 }

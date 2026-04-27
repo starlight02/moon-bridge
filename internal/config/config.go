@@ -65,6 +65,13 @@ type RouteEntry struct {
 	OutputPrice     float64
 	CacheWritePrice float64
 	CacheReadPrice  float64
+	// Codex model catalog metadata.
+	DisplayName              string
+	Description              string
+	DefaultReasoningLevel    string
+	SupportedReasoningLevels []ReasoningLevelPreset
+	SupportsReasoningSummaries bool
+	DefaultReasoningSummary  string
 }
 
 // ProviderDef defines a single upstream provider.
@@ -92,6 +99,13 @@ type ModelMeta struct {
 	OutputPrice     float64
 	CacheWritePrice float64
 	CacheReadPrice  float64
+	// Codex model catalog metadata.
+	DisplayName              string
+	Description              string
+	DefaultReasoningLevel    string
+	SupportedReasoningLevels []ReasoningLevelPreset
+	SupportsReasoningSummaries bool
+	DefaultReasoningSummary  string
 }
 
 type ResponseProxyConfig struct {
@@ -105,6 +119,12 @@ type AnthropicProxyConfig struct {
 	ProviderBaseURL string
 	ProviderAPIKey  string
 	ProviderVersion string
+}
+
+// ReasoningLevelPreset describes a supported reasoning effort level.
+type ReasoningLevelPreset struct {
+	Effort      string
+	Description string
 }
 
 type CacheConfig struct {
@@ -274,6 +294,12 @@ func (cfg Config) RouteFor(model string) RouteEntry {
 				entry.OutputPrice = meta.OutputPrice
 				entry.CacheWritePrice = meta.CacheWritePrice
 				entry.CacheReadPrice = meta.CacheReadPrice
+				entry.DisplayName = meta.DisplayName
+				entry.Description = meta.Description
+				entry.DefaultReasoningLevel = meta.DefaultReasoningLevel
+				entry.SupportedReasoningLevels = meta.SupportedReasoningLevels
+				entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
+				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
 			}
 			return entry
 		}
