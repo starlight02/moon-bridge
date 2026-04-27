@@ -149,6 +149,11 @@ func (converter *streamConverter) contentBlockDelta(event anthropic.StreamEvent)
 			return nil
 		}
 		converter.toolArguments[index] += event.Delta.PartialJSON
+		// local_shell_call items accumulate silently; Codex only expects
+		// the completed item via response.output_item.done.
+		if strings.HasPrefix(converter.itemIDs[index], "lc_") {
+			return nil
+		}
 		return []openai.StreamEvent{{
 			Event: "response.function_call_arguments.delta",
 			Data: openai.FunctionCallArgumentsDeltaEvent{

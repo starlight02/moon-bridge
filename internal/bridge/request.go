@@ -210,7 +210,7 @@ func (bridge *Bridge) convertTools(tools []openai.Tool, opt RequestOptions) ([]a
 				Type:    "web_search_20250305",
 				MaxUses: maxUses,
 			})
-		case "file_search", "computer_use_preview", "image_generation":
+		case "file_search", "computer_use_preview", "image_generation", "tool_search":
 			continue
 		default:
 			return nil, &RequestError{
