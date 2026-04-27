@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,10 +16,10 @@ import (
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
-	"moonbridge/internal/plugin"
 	"moonbridge/internal/extensions/websearchinjected"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/openai"
+	"moonbridge/internal/plugin"
 	"moonbridge/internal/provider"
 	"moonbridge/internal/session"
 	"moonbridge/internal/stats"
@@ -90,7 +91,6 @@ func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 	server.mux.ServeHTTP(writer, request)
 }
 
-
 // ModelInfo represents a model entry in the OpenAI /v1/models response.
 type ModelInfo struct {
 	Slug                        string                    `json:"slug"`
@@ -116,7 +116,7 @@ type ModelInfo struct {
 	SupportsParallelToolCalls   bool                      `json:"supports_parallel_tool_calls"`
 	SupportsImageDetailOriginal bool                      `json:"supports_image_detail_original"`
 	ContextWindow               *int                      `json:"context_window,omitempty"`
-	MaxContextWindow             *int                      `json:"max_context_window,omitempty"`
+	MaxContextWindow            *int                      `json:"max_context_window,omitempty"`
 	AutoCompactTokenLimit       *int                      `json:"auto_compact_token_limit,omitempty"`
 	EffectiveContextWindowPct   int                       `json:"effective_context_window_percent"`
 	ExperimentalSupportedTools  []string                  `json:"experimental_supported_tools"`
@@ -135,6 +135,13 @@ type TruncationPolicyConfig struct {
 	Mode  string `json:"mode"`
 	Limit int64  `json:"limit"`
 }
+
+const (
+	defaultApplyPatchToolType = "freeform"
+	// DefaultCatalogTruncationLimit keeps shell tool output from being clamped
+	// to zero while using a consistent token policy across generated models.
+	DefaultCatalogTruncationLimit int64 = 10000
+)
 
 // ReasoningLevelPresetDTO is the JSON shape Codex expects for reasoning presets.
 type ReasoningLevelPresetDTO struct {
@@ -161,25 +168,8 @@ func (server *Server) handleModels(writer http.ResponseWriter, request *http.Req
 	json.NewEncoder(writer).Encode(resp)
 }
 
-
 func (server *Server) listModels() []ModelInfo {
-	seen := make(map[string]bool)
-	var models []ModelInfo
-
-	// Route aliases (processed second so they won't be shadowed by direct entries).
-	for alias, route := range server.appConfig.Routes {
-		if seen[alias] {
-			continue
-		}
-		seen[alias] = true
-		ownedBy := "system"
-		if route.Provider != "" {
-			ownedBy = route.Provider
-		}
-		models = append(models, BuildModelInfoFromRoute(alias, ownedBy, route))
-	}
-
-	return models
+	return BuildModelInfosFromConfig(server.appConfig)
 }
 
 func (server *Server) handleResponses(writer http.ResponseWriter, request *http.Request) {
@@ -802,6 +792,67 @@ func BuildModelInfoFromRoute(alias string, ownedBy string, route config.RouteEnt
 		route.SupportsReasoningSummaries, route.DefaultReasoningSummary)
 }
 
+// BuildModelInfoFromProviderModel creates a Codex-compatible ModelInfo from a
+// provider model catalog entry.
+func BuildModelInfoFromProviderModel(slug string, ownedBy string, meta config.ModelMeta) ModelInfo {
+	displayName := meta.DisplayName
+	if displayName == "" {
+		displayName = slug + " (" + ownedBy + ")"
+	}
+	return newModelInfo(slug, displayName, meta.Description, meta.ContextWindow,
+		meta.DefaultReasoningLevel, meta.SupportedReasoningLevels,
+		meta.SupportsReasoningSummaries, meta.DefaultReasoningSummary)
+}
+
+// BuildModelInfosFromConfig returns Codex model catalog entries. Provider model
+// catalogs are the primary source; routes are appended as fallback aliases.
+func BuildModelInfosFromConfig(cfg config.Config) []ModelInfo {
+	seen := make(map[string]bool)
+	var models []ModelInfo
+
+	providerKeys := make([]string, 0, len(cfg.ProviderDefs))
+	for key := range cfg.ProviderDefs {
+		providerKeys = append(providerKeys, key)
+	}
+	sort.Strings(providerKeys)
+	for _, providerKey := range providerKeys {
+		def := cfg.ProviderDefs[providerKey]
+		modelNames := make([]string, 0, len(def.Models))
+		for name := range def.Models {
+			modelNames = append(modelNames, name)
+		}
+		sort.Strings(modelNames)
+		for _, name := range modelNames {
+			slug := providerKey + "/" + name
+			if seen[slug] {
+				continue
+			}
+			seen[slug] = true
+			models = append(models, BuildModelInfoFromProviderModel(slug, providerKey, def.Models[name]))
+		}
+	}
+
+	routeAliases := make([]string, 0, len(cfg.Routes))
+	for alias := range cfg.Routes {
+		routeAliases = append(routeAliases, alias)
+	}
+	sort.Strings(routeAliases)
+	for _, alias := range routeAliases {
+		if seen[alias] {
+			continue
+		}
+		seen[alias] = true
+		route := cfg.Routes[alias]
+		ownedBy := "system"
+		if route.Provider != "" {
+			ownedBy = route.Provider
+		}
+		models = append(models, BuildModelInfoFromRoute(alias, ownedBy, route))
+	}
+
+	return models
+}
+
 // newModelInfo builds a ModelInfo with all fields Codex requires.
 func newModelInfo(
 	slug, displayName, description string,
@@ -827,27 +878,33 @@ func newModelInfo(
 	if defaultReasoningSummary == "" {
 		defaultReasoningSummary = "none"
 	}
+	applyPatchToolType := defaultApplyPatchToolType
 	return ModelInfo{
-		Slug:                        slug,
-		DisplayName:                 displayName,
-		Description:                 description,
-		DefaultReasoningLevel:       defaultReasoningLevel,
-		SupportedReasoningLevels:    levels,
-		ShellType:                   "unified_exec",
-		Visibility:                  "list",
-		SupportedInAPI:              true,
-		Priority:                    0,
-		AdditionalSpeedTiers:        []string{},
-		BaseInstructions:            "",
-		SupportsReasoningSummaries:  supportsReasoningSummaries,
-		DefaultReasoningSummary:     defaultReasoningSummary,
-		WebSearchToolType:           "text",
-		TruncationPolicy:            TruncationPolicyConfig{Mode: "tokens", Limit: 0},
-		SupportsParallelToolCalls:   true,
-		ContextWindow:               ctxWin,
-		MaxContextWindow:            maxCtxWin,
-		EffectiveContextWindowPct:   95,
-		ExperimentalSupportedTools:  []string{},
-		InputModalities:             []string{"text"},
+		Slug:                       slug,
+		DisplayName:                displayName,
+		Description:                description,
+		DefaultReasoningLevel:      defaultReasoningLevel,
+		SupportedReasoningLevels:   levels,
+		ShellType:                  "unified_exec",
+		Visibility:                 "list",
+		SupportedInAPI:             true,
+		Priority:                   0,
+		AdditionalSpeedTiers:       []string{},
+		BaseInstructions:           "",
+		SupportsReasoningSummaries: supportsReasoningSummaries,
+		DefaultReasoningSummary:    defaultReasoningSummary,
+		WebSearchToolType:          "text",
+		ApplyPatchToolType:         &applyPatchToolType,
+		TruncationPolicy:           truncationPolicyForModel(slug),
+		SupportsParallelToolCalls:  true,
+		ContextWindow:              ctxWin,
+		MaxContextWindow:           maxCtxWin,
+		EffectiveContextWindowPct:  95,
+		ExperimentalSupportedTools: []string{},
+		InputModalities:            []string{"text"},
 	}
+}
+
+func truncationPolicyForModel(string) TruncationPolicyConfig {
+	return TruncationPolicyConfig{Mode: "tokens", Limit: DefaultCatalogTruncationLimit}
 }

@@ -13,8 +13,8 @@ import (
 	"moonbridge/internal/config"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/openai"
-	"moonbridge/internal/session"
 	"moonbridge/internal/plugin"
+	"moonbridge/internal/session"
 )
 
 type Bridge struct {
@@ -171,6 +171,7 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest, sess *session
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	pluginCtx := bridge.pluginRequestContext(request.Model, sess, request.Reasoning, opt)
 	log := logger.L().With("model", request.Model)
 	log.Debug("converting OpenAI request to Anthropic")
 	if request.Model == "" {
@@ -189,6 +190,7 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest, sess *session
 	if bridge.cfg.SystemPrompt != "" {
 		system = append([]anthropic.ContentBlock{{Type: "text", Text: bridge.cfg.SystemPrompt}}, system...)
 	}
+	messages = bridge.plugins.RewriteMessages(pluginCtx, messages)
 	if len(messages) == 0 {
 		messages = []anthropic.Message{{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: " "}}}}
 	}
@@ -197,6 +199,7 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest, sess *session
 	if err != nil {
 		return anthropic.MessageRequest{}, cache.CacheCreationPlan{}, err
 	}
+	tools = append(tools, bridge.plugins.InjectTools(pluginCtx)...)
 	toolChoice, err := bridge.convertToolChoice(request.ToolChoice, conversionContext)
 	if err != nil {
 		return anthropic.MessageRequest{}, cache.CacheCreationPlan{}, err
@@ -224,7 +227,7 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest, sess *session
 		Metadata:      request.Metadata,
 	}
 
-	bridge.plugins.PostConvertRequest(request.Model, &converted, request.Reasoning)
+	bridge.plugins.MutateRequest(pluginCtx, &converted)
 
 	plan, err := bridge.planCache(request, converted)
 	if err != nil {
@@ -392,8 +395,7 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 		metadata["provider_usage"] = response.Usage
 	}
 
-	log.Info("response converted", "output_items", len(output), "status", status)
-	return openai.Response{
+	openAIResponse := openai.Response{
 		ID:                responseID(response.ID),
 		Object:            "response",
 		CreatedAt:         time.Now().Unix(),
@@ -405,6 +407,9 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 		Metadata:          metadata,
 		IncompleteDetails: incomplete,
 	}
+	bridge.plugins.PostProcessResponse(bridge.pluginRequestContext(model, sess, nil, RequestOptions{}), &openAIResponse)
+	log.Info("response converted", "output_items", len(openAIResponse.Output), "status", openAIResponse.Status)
+	return openAIResponse
 }
 
 func (bridge *Bridge) ErrorResponse(err error) (int, openai.ErrorResponse) {
@@ -452,4 +457,21 @@ func (bridge *Bridge) NewSession() *session.Session {
 	sess := session.New()
 	sess.InitExtensions(bridge.plugins.NewSessionData())
 	return sess
+}
+
+func (bridge *Bridge) pluginRequestContext(model string, sess *session.Session, reasoning map[string]any, opt RequestOptions) *plugin.RequestContext {
+	var sessionData map[string]any
+	if sess != nil {
+		sessionData = sess.ExtensionData
+	}
+	return &plugin.RequestContext{
+		ModelAlias:  model,
+		SessionData: sessionData,
+		Reasoning:   reasoning,
+		WebSearch: plugin.WebSearchInfo{
+			Mode:         opt.WebSearchMode,
+			MaxUses:      opt.WebSearchMaxUses,
+			FirecrawlKey: opt.FirecrawlAPIKey,
+		},
+	}
 }

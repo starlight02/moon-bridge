@@ -145,6 +145,34 @@ provider:
 	}
 }
 
+func TestLoadFromYAMLAllowsProviderModelCatalogWithoutRoutes(t *testing.T) {
+	cfg, err := config.LoadFromYAML([]byte(`
+mode: Transform
+provider:
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        claude-test:
+          context_window: 200000
+  default_model: main/claude-test
+`))
+	if err != nil {
+		t.Fatalf("LoadFromYAML() error = %v", err)
+	}
+	if got := cfg.ModelFor("main/claude-test"); got != "claude-test" {
+		t.Fatalf("ModelFor(main/claude-test) = %q", got)
+	}
+	route := cfg.RouteFor("main/claude-test")
+	if route.Provider != "main" || route.Model != "claude-test" || route.ContextWindow != 200000 {
+		t.Fatalf("RouteFor(main/claude-test) = %+v", route)
+	}
+	if got := cfg.DefaultModelAlias(); got != "main/claude-test" {
+		t.Fatalf("DefaultModelAlias() = %q", got)
+	}
+}
+
 func TestLoadFromYAMLRejectsInvalidMultiProviderConfig(t *testing.T) {
 	for name, input := range map[string]string{
 		"missing provider base URL": `
@@ -171,6 +199,26 @@ provider:
         gpt-image-1.5: {}
   routes:
     image: "openai/gpt-image-1.5"
+`,
+		"missing provider model catalog and routes": `
+mode: Transform
+provider:
+  providers:
+    openai:
+      base_url: https://openai.example.test
+      api_key: openai-key
+      protocol: openai
+`,
+		"empty provider model name": `
+mode: Transform
+provider:
+  providers:
+    openai:
+      base_url: https://openai.example.test
+      api_key: openai-key
+      protocol: openai
+      models:
+        "": {}
 `,
 		"empty route model": `
 mode: Transform

@@ -61,6 +61,8 @@ provider:
         support: "enabled"
 
   routes:
+    # Optional aliases. Provider models are listed directly in the Codex catalog
+    # as provider/upstream_model; routes only add friendly fallback names.
     moonbridge: "deepseek/deepseek-v4-pro"
     gpt-image: "openai/gpt-image-1.5"
     gpt-tts: "openai/gpt-4o-mini-tts"

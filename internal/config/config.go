@@ -75,12 +75,12 @@ type RouteEntry struct {
 	CacheWritePrice float64
 	CacheReadPrice  float64
 	// Codex model catalog metadata.
-	DisplayName              string
-	Description              string
-	DefaultReasoningLevel    string
-	SupportedReasoningLevels []ReasoningLevelPreset
+	DisplayName                string
+	Description                string
+	DefaultReasoningLevel      string
+	SupportedReasoningLevels   []ReasoningLevelPreset
 	SupportsReasoningSummaries bool
-	DefaultReasoningSummary  string
+	DefaultReasoningSummary    string
 	// WebSearch holds route-level web search config (overrides model and provider-level).
 	WebSearch WebSearchConfig
 	// DeepSeekV4 enables the DeepSeek V4 thinking extension for this route.
@@ -112,12 +112,12 @@ type ModelMeta struct {
 	CacheWritePrice float64
 	CacheReadPrice  float64
 	// Codex model catalog metadata.
-	DisplayName              string
-	Description              string
-	DefaultReasoningLevel    string
-	SupportedReasoningLevels []ReasoningLevelPreset
+	DisplayName                string
+	Description                string
+	DefaultReasoningLevel      string
+	SupportedReasoningLevels   []ReasoningLevelPreset
 	SupportsReasoningSummaries bool
-	DefaultReasoningSummary  string
+	DefaultReasoningSummary    string
 	// WebSearch holds model-level web search config (overrides provider-level).
 	WebSearch WebSearchConfig
 	// DeepSeekV4 enables the DeepSeek V4 thinking extension for this model.
@@ -178,9 +178,7 @@ func (cfg Config) validateTransform() error {
 		return err
 	}
 	if len(cfg.ProviderDefs) > 0 {
-		if len(cfg.Routes) == 0 {
-			return errors.New("routes must contain at least one model mapping")
-		}
+		hasProviderModel := false
 		for key, def := range cfg.ProviderDefs {
 			if key == "" {
 				return errors.New("providers cannot contain empty provider keys")
@@ -196,6 +194,15 @@ func (cfg Config) validateTransform() error {
 			default:
 				return fmt.Errorf("providers.%s.protocol must be \"anthropic\" or \"openai\"", key)
 			}
+			for modelName := range def.Models {
+				if modelName == "" {
+					return fmt.Errorf("providers.%s.models cannot contain empty model names", key)
+				}
+				hasProviderModel = true
+			}
+		}
+		if !hasProviderModel && len(cfg.Routes) == 0 {
+			return errors.New("provider model catalog or routes must contain at least one model")
 		}
 		for alias, route := range cfg.Routes {
 			if alias == "" || route.Model == "" {
@@ -600,6 +607,7 @@ func (cfg Config) ProviderFor(modelAlias string) string {
 	}
 	return ""
 }
+
 // ParseModelRef parses a model reference that may be in "provider/model" format.
 // Returns (providerKey, modelName). If no slash, providerKey is "" and modelName is the input.
 func ParseModelRef(ref string) (provider, model string) {

@@ -138,6 +138,43 @@ func TestResolvePerProviderWebSearchFallsBackToGlobal(t *testing.T) {
 	}
 }
 
+func TestResolvePerProviderWebSearchAppliesProviderCatalogModelOverride(t *testing.T) {
+	cfg := config.Config{
+		ProviderDefs: map[string]config.ProviderDef{
+			"main": {
+				WebSearchSupport: config.WebSearchSupportDisabled,
+				Models: map[string]config.ModelMeta{
+					"claude-test": {
+						WebSearch: config.WebSearchConfig{Support: config.WebSearchSupportEnabled},
+					},
+				},
+			},
+		},
+	}
+	pm, err := provider.NewProviderManager(
+		map[string]provider.ProviderConfig{
+			"main": {
+				BaseURL:          "https://test.example.test",
+				APIKey:           "test-key",
+				WebSearchSupport: string(config.WebSearchSupportDisabled),
+				ModelNames:       []string{"claude-test"},
+			},
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolvePerProviderWebSearch(context.Background(), cfg, pm, &bytes.Buffer{})
+	if got := pm.ResolvedWebSearch("main"); got != "disabled" {
+		t.Fatalf("ResolvedWebSearch(main) = %q, want disabled", got)
+	}
+	if got := pm.ResolvedWebSearchForModel("main/claude-test"); got != "enabled" {
+		t.Fatalf("ResolvedWebSearchForModel(main/claude-test) = %q, want enabled", got)
+	}
+}
+
 func TestBuildProviderDefsFromConfigKeepsMultiProviderDefinitions(t *testing.T) {
 	cfg := config.Config{
 		ProviderDefs: map[string]config.ProviderDef{

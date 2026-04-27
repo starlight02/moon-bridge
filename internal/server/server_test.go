@@ -16,9 +16,9 @@ import (
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
-	"moonbridge/internal/plugin"
 	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/logger"
+	"moonbridge/internal/plugin"
 	"moonbridge/internal/provider"
 	"moonbridge/internal/server"
 	"moonbridge/internal/stats"
@@ -207,6 +207,63 @@ func TestResponsesHandlerAcceptsCodexResponsesPath(t *testing.T) {
 	}
 }
 
+func TestBuildModelInfoFromRouteEnablesApplyPatchFreeform(t *testing.T) {
+	info := server.BuildModelInfoFromRoute("gpt-test", "default", config.RouteEntry{
+		DisplayName: "GPT Test",
+	})
+
+	if info.ApplyPatchToolType == nil || *info.ApplyPatchToolType != "freeform" {
+		t.Fatalf("apply_patch_tool_type = %v", info.ApplyPatchToolType)
+	}
+	if info.TruncationPolicy.Mode != "tokens" || info.TruncationPolicy.Limit != server.DefaultCatalogTruncationLimit {
+		t.Fatalf("truncation_policy = %+v", info.TruncationPolicy)
+	}
+}
+
+func TestBuildModelInfoFromRouteUsesTokenTruncationPolicyForGPT52(t *testing.T) {
+	info := server.BuildModelInfoFromRoute("gpt-5.2", "default", config.RouteEntry{
+		DisplayName: "GPT 5.2",
+	})
+
+	if info.TruncationPolicy.Mode != "tokens" || info.TruncationPolicy.Limit != server.DefaultCatalogTruncationLimit {
+		t.Fatalf("truncation_policy = %+v", info.TruncationPolicy)
+	}
+}
+
+func TestBuildModelInfosFromConfigIncludesProviderModelsBeforeRouteFallback(t *testing.T) {
+	models := server.BuildModelInfosFromConfig(config.Config{
+		ProviderDefs: map[string]config.ProviderDef{
+			"p1": {
+				Models: map[string]config.ModelMeta{
+					"model-b": {DisplayName: "Model B", ContextWindow: 2000},
+					"model-a": {DisplayName: "Model A", ContextWindow: 1000},
+				},
+			},
+			"p2": {
+				Models: map[string]config.ModelMeta{
+					"model-c": {DisplayName: "Model C", ContextWindow: 3000},
+				},
+			},
+		},
+		Routes: map[string]config.RouteEntry{
+			"alias-a":    {Provider: "p1", Model: "model-a", DisplayName: "Alias A"},
+			"p1/model-a": {Provider: "p1", Model: "model-a", DisplayName: "Duplicate Direct"},
+		},
+	})
+
+	var slugs []string
+	for _, model := range models {
+		slugs = append(slugs, model.Slug)
+	}
+	want := []string{"p1/model-a", "p1/model-b", "p2/model-c", "alias-a"}
+	if strings.Join(slugs, ",") != strings.Join(want, ",") {
+		t.Fatalf("slugs = %v, want %v", slugs, want)
+	}
+	if models[0].DisplayName != "Model A" || models[0].ContextWindow == nil || *models[0].ContextWindow != 1000 {
+		t.Fatalf("provider metadata not preserved: %+v", models[0])
+	}
+}
+
 func TestResponsesHandlerRejectsUnsupportedToolType(t *testing.T) {
 	handler := server.New(server.Config{
 		Bridge: bridge.New(config.Config{
@@ -293,9 +350,9 @@ func TestResponsesHandlerReusesCodexSessionForDeepSeekThinking(t *testing.T) {
 	plugins := plugin.NewRegistry(nil)
 	plugins.Register(deepseekv4.NewPlugin(cfg.DeepSeekV4ForModel))
 	handler := server.New(server.Config{
-		Bridge:     bridge.New(cfg, cache.NewMemoryRegistry(), plugins),
-		Provider:   provider,
-		Plugins: plugins,
+		Bridge:   bridge.New(cfg, cache.NewMemoryRegistry(), plugins),
+		Provider: provider,
+		Plugins:  plugins,
 	})
 
 	firstRequest := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"inspect","stream":true}`))

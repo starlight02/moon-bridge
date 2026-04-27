@@ -127,21 +127,17 @@ func valueOrDefault(value string, fallback string) string {
 	return value
 }
 
-// writeModelsCatalog generates a Codex-compatible models_catalog.json from all routes.
+// writeModelsCatalog generates a Codex-compatible models_catalog.json from
+// provider model catalogs, with routes appended as fallback aliases.
 func writeModelsCatalog(path string, cfg config.Config) error {
-	var models []server.ModelInfo
-	for alias, route := range cfg.Routes {
-		ownedBy := "system"
-		if route.Provider != "" {
-			ownedBy = route.Provider
-		}
-		models = append(models, server.BuildModelInfoFromRoute(alias, ownedBy, route))
-	}
 	catalog := struct {
 		Models []server.ModelInfo `json:"models"`
-	}{Models: models}
+	}{Models: server.BuildModelInfosFromConfig(cfg)}
 	data, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)

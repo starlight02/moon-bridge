@@ -14,10 +14,10 @@ import (
 	"moonbridge/internal/config"
 	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/logger"
+	"moonbridge/internal/plugin"
 	"moonbridge/internal/provider"
 	"moonbridge/internal/proxy"
 	"moonbridge/internal/server"
-	"moonbridge/internal/plugin"
 	"moonbridge/internal/stats"
 	mbtrace "moonbridge/internal/trace"
 )
@@ -31,7 +31,6 @@ func Run(output io.Writer) {
 func WelcomeMessage() string {
 	return "Welcome to " + Name + "!"
 }
-
 
 func RunServer(ctx context.Context, cfg config.Config, errors io.Writer) error {
 	switch cfg.Mode {
@@ -95,6 +94,10 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	// Register plugins.
 	plugins := plugin.NewRegistry(nil)
 	plugins.Register(deepseekv4.NewPlugin(cfg.DeepSeekV4ForModel))
+	if err := plugins.InitAll(nil); err != nil {
+		return fmt.Errorf("init plugins: %w", err)
+	}
+	defer plugins.ShutdownAll()
 
 	handler := server.New(server.Config{
 		Bridge:      bridge.New(cfg, cache.NewMemoryRegistry(), plugins),
@@ -104,7 +107,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 		TraceErrors: errors,
 		Stats:       sessionStats,
 		AppConfig:   cfg,
-		Plugins: plugins,
+		Plugins:     plugins,
 	})
 
 	return runHTTPServer(ctx, cfg.Addr, handler, errors, sessionStats)
@@ -141,7 +144,7 @@ func buildProviderDefsFromConfig(cfg config.Config) map[string]provider.Provider
 				UserAgent:        def.UserAgent,
 				Protocol:         def.Protocol,
 				WebSearchSupport: string(def.WebSearchSupport),
-				ModelNames:        modelNames,
+				ModelNames:       modelNames,
 			}
 		}
 		return defs
@@ -201,29 +204,40 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 			pm.SetResolvedWebSearch(key, resolved)
 		}
 	}
-	// 2. Resolve model-level overrides for routes that have their own web_search config.
+	// 2. Resolve model-level overrides for provider catalog slugs and route aliases.
+	for providerKey, def := range cfg.ProviderDefs {
+		providerWS := cfg.WebSearchForProvider(providerKey)
+		for modelName := range def.Models {
+			alias := providerKey + "/" + modelName
+			resolveModelWebSearch(ctx, alias, cfg.WebSearchForModel(alias), providerWS, pm, errors)
+		}
+	}
 	for alias, route := range cfg.Routes {
 		modelWS := cfg.WebSearchForModel(alias)
 		providerWS := cfg.WebSearchForProvider(route.Provider)
-		if modelWS == providerWS {
-			continue // no model-level override, provider resolution applies
-		}
-		modelKey := "model:" + alias
-		switch modelWS {
-		case config.WebSearchSupportDisabled:
-			pm.SetResolvedWebSearch(modelKey, "disabled")
-			logger.Info("web_search disabled by model config", "model", alias)
-		case config.WebSearchSupportEnabled:
-			pm.SetResolvedWebSearch(modelKey, "enabled")
-			logger.Info("web_search forced enabled by model config", "model", alias)
-		case config.WebSearchSupportInjected:
-			pm.SetResolvedWebSearch(modelKey, "injected")
-			logger.Info("web_search injected mode by model config", "model", alias)
-		default:
-			// Auto: probe using this model's upstream name.
-			resolved := probeModelWebSearch(ctx, alias, pm, errors)
-			pm.SetResolvedWebSearch(modelKey, resolved)
-		}
+		resolveModelWebSearch(ctx, alias, modelWS, providerWS, pm, errors)
+	}
+}
+
+func resolveModelWebSearch(ctx context.Context, alias string, modelWS config.WebSearchSupport, providerWS config.WebSearchSupport, pm *provider.ProviderManager, errors io.Writer) {
+	if modelWS == providerWS {
+		return // no model-level override, provider resolution applies
+	}
+	modelKey := "model:" + alias
+	switch modelWS {
+	case config.WebSearchSupportDisabled:
+		pm.SetResolvedWebSearch(modelKey, "disabled")
+		logger.Info("web_search disabled by model config", "model", alias)
+	case config.WebSearchSupportEnabled:
+		pm.SetResolvedWebSearch(modelKey, "enabled")
+		logger.Info("web_search forced enabled by model config", "model", alias)
+	case config.WebSearchSupportInjected:
+		pm.SetResolvedWebSearch(modelKey, "injected")
+		logger.Info("web_search injected mode by model config", "model", alias)
+	default:
+		// Auto: probe using this model's upstream name.
+		resolved := probeModelWebSearch(ctx, alias, pm, errors)
+		pm.SetResolvedWebSearch(modelKey, resolved)
 	}
 }
 

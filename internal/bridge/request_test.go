@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"testing"
 
+	"moonbridge/internal/anthropic"
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
-	"moonbridge/internal/plugin"
 	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/openai"
+	"moonbridge/internal/plugin"
 )
 
 func TestToAnthropicAcceptsCodexLocalShellTool(t *testing.T) {
@@ -136,6 +137,53 @@ func TestToAnthropicKeepsCodexWebSearchToolForModelDecision(t *testing.T) {
 	}
 	if converted.Tools[1].Name != "list_mcp_resources" {
 		t.Fatalf("tool = %+v", converted.Tools[1])
+	}
+}
+
+type bridgeToolInjector struct {
+	plugin.BasePlugin
+	seenWebSearch plugin.WebSearchInfo
+}
+
+func (p *bridgeToolInjector) Name() string                      { return "bridge_tool_injector" }
+func (p *bridgeToolInjector) EnabledForModel(model string) bool { return model == "gpt-test" }
+
+func (p *bridgeToolInjector) InjectTools(ctx *plugin.RequestContext) []anthropic.Tool {
+	p.seenWebSearch = ctx.WebSearch
+	return []anthropic.Tool{{
+		Name:        "plugin_tool",
+		Description: "Injected by plugin",
+		InputSchema: map[string]any{"type": "object"},
+	}}
+}
+
+func TestToAnthropicAppendsPluginInjectedTools(t *testing.T) {
+	cfg := config.Config{
+		DefaultMaxTokens: 1024,
+		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
+		Cache:            config.CacheConfig{Mode: "off"},
+	}
+	plugins := plugin.NewRegistry(nil)
+	injector := &bridgeToolInjector{}
+	plugins.Register(injector)
+	bridgeUnderTest := bridge.New(cfg, cache.NewMemoryRegistry(), plugins)
+
+	converted, _, err := bridgeUnderTest.ToAnthropic(openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`"hello"`),
+		Tools: []openai.Tool{{Type: "local_shell"}},
+	}, nil, bridge.RequestOptions{WebSearchMode: "injected", WebSearchMaxUses: 3, FirecrawlAPIKey: "fc-test"})
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	if len(converted.Tools) != 2 {
+		t.Fatalf("tools = %+v", converted.Tools)
+	}
+	if converted.Tools[0].Name != "local_shell" || converted.Tools[1].Name != "plugin_tool" {
+		t.Fatalf("tools = %+v", converted.Tools)
+	}
+	if injector.seenWebSearch.Mode != "injected" || injector.seenWebSearch.MaxUses != 3 || injector.seenWebSearch.FirecrawlKey != "fc-test" {
+		t.Fatalf("plugin web search context = %+v", injector.seenWebSearch)
 	}
 }
 
