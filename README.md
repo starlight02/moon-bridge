@@ -18,7 +18,7 @@ cp config.example.yml config.yml
 go run ./cmd/moonbridge
 ```
 
-默认监听 `127.0.0.1:38440`。启动后即可通过 `http://localhost:38440/v1/responses` 调用。
+默认监听 `127.0.0.1:38440`。启动后即可通过 `http://localhost:38440/v1/responses` 调用。`GET /v1/models` 可查看所有可用模型。
 
 ## 三种工作模式
 
@@ -40,7 +40,7 @@ go run ./cmd/moonbridge
 
 ### Provider 与模型路由
 
-Provider 在 `models` 中声明自己提供的上游模型及元信息（context_window、pricing 等），`routes` 则是一张独立的转发表，把客户端使用的模型别名映射到 `"provider/upstream_model"`。例如客户端请求 `model: "moonbridge"` 时，会发往 `deepseek` Provider 的 `deepseek-v4-pro`；请求 `model: "gpt-image"` 时，会按 OpenAI Responses 协议直接发往 `openai` Provider 的 `gpt-image-1.5`：
+Provider 在 `models` 中声明自己提供的上游模型及元信息（context_window、pricing 等），`routes` 则是一张独立的转发表，把客户端使用的模型别名映射到 `"provider/upstream_model"`。此外，API 请求中可直接使用 `provider/model` 格式指定模型（如 `deepseek/deepseek-v4-pro`），无需预先定义 route。例如客户端请求 `model: "moonbridge"` 时，会发往 `deepseek` Provider 的 `deepseek-v4-pro`；请求 `model: "gpt-image"` 时，会按 OpenAI Responses 协议直接发往 `openai` Provider 的 `gpt-image-1.5`：
 
 ```yaml
 provider:
