@@ -65,6 +65,7 @@ type ProviderModelFileConfig struct {
 	SupportsReasoningSummaries *bool                          `yaml:"supports_reasoning_summaries"`
 	DefaultReasoningSummary  string                          `yaml:"default_reasoning_summary"`
 	WebSearch                WebSearchFileConfig             `yaml:"web_search"`
+	DeepSeekV4               bool                            `yaml:"deepseek_v4"`
 }
 
 type ProviderDefFileConfig struct {
@@ -73,7 +74,6 @@ type ProviderDefFileConfig struct {
 	Version    string                             `yaml:"version"`
 	UserAgent  string                             `yaml:"user_agent"`
 	Protocol   string                             `yaml:"protocol"`
-	DeepSeekV4 bool                               `yaml:"deepseek_v4"`
 	WebSearch  WebSearchFileConfig                `yaml:"web_search"`
 	Models     map[string]ProviderModelFileConfig `yaml:"models"`
 }
@@ -279,6 +279,7 @@ func buildRoutes(rawRoutes map[string]string, providerDefs map[string]ProviderDe
 			entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
 			entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
 			entry.WebSearch = meta.WebSearch
+			entry.DeepSeekV4 = meta.DeepSeekV4
 		}
 		}
 		routes[trimmedAlias] = entry
@@ -335,6 +336,7 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 				SearchMaxRounds: m.WebSearch.SearchMaxRounds,
 			}
 		}
+		meta.DeepSeekV4 = m.DeepSeekV4
 		for _, preset := range m.SupportedReasoningLevels {
 				meta.SupportedReasoningLevels = append(meta.SupportedReasoningLevels, ReasoningLevelPreset{
 					Effort:      strings.TrimSpace(preset.Effort),
@@ -349,7 +351,6 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 			Version:          strings.TrimSpace(def.Version),
 			UserAgent:        strings.TrimSpace(def.UserAgent),
 			Protocol:         strings.TrimSpace(def.Protocol),
-			DeepSeekV4:       def.DeepSeekV4,
 			WebSearchSupport: wsSupport,
 			WebSearchMaxUses: def.WebSearch.MaxUses,
 			TavilyAPIKey:     strings.TrimSpace(def.WebSearch.TavilyAPIKey),

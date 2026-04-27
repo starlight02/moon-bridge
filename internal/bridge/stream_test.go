@@ -588,8 +588,8 @@ func TestConvertStreamEventsMarksTextOutputCompletedInFinalResponse(t *testing.T
 func TestDeepSeekThinkingIsStatefullyInjectedOnlyForToolCalls(t *testing.T) {
 	bridgeUnderTest := testBridgeWithConfig(config.Config{
 		DefaultMaxTokens: 1024,
-		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro"}},
-		ProviderDefs:     map[string]config.ProviderDef{"default": {DeepSeekV4: true}},
+		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro", DeepSeekV4: true}},
+		ProviderDefs:     map[string]config.ProviderDef{"default": {}},
 		Cache: config.CacheConfig{
 			Mode:          "off",
 			PromptCaching: true,
@@ -678,8 +678,8 @@ func TestDeepSeekThinkingIsStatefullyInjectedOnlyForToolCalls(t *testing.T) {
 func TestDeepSeekSignatureOnlyThinkingIsReinjectedForToolCalls(t *testing.T) {
 	bridgeUnderTest := testBridgeWithConfig(config.Config{
 		DefaultMaxTokens: 1024,
-		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro"}},
-		ProviderDefs:     map[string]config.ProviderDef{"default": {DeepSeekV4: true}},
+		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro", DeepSeekV4: true}},
+		ProviderDefs:     map[string]config.ProviderDef{"default": {}},
 		Cache: config.CacheConfig{
 			Mode:          "off",
 			PromptCaching: true,
@@ -738,8 +738,8 @@ func TestDeepSeekSignatureOnlyThinkingIsReinjectedForToolCalls(t *testing.T) {
 func TestDeepSeekThinkingIsInjectedForToolChainFinalAssistantText(t *testing.T) {
 	bridgeUnderTest := testBridgeWithConfig(config.Config{
 		DefaultMaxTokens: 1024,
-		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro"}},
-		ProviderDefs:     map[string]config.ProviderDef{"default": {DeepSeekV4: true}},
+		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro", DeepSeekV4: true}},
+		ProviderDefs:     map[string]config.ProviderDef{"default": {}},
 		Cache: config.CacheConfig{
 			Mode:          "off",
 			PromptCaching: true,

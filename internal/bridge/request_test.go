@@ -226,11 +226,11 @@ func TestToAnthropicAppliesDeepSeekV4OnlyForRoutedProvider(t *testing.T) {
 	bridgeUnderTest := bridge.New(config.Config{
 		DefaultMaxTokens: 1024,
 		Routes: map[string]config.RouteEntry{
-			"deep":   {Provider: "deepseek", Model: "deepseek-v4-pro"},
+			"deep":   {Provider: "deepseek", Model: "deepseek-v4-pro", DeepSeekV4: true},
 			"claude": {Provider: "anthropic", Model: "claude-test"},
 		},
 		ProviderDefs: map[string]config.ProviderDef{
-			"deepseek":  {DeepSeekV4: true},
+			"deepseek":  {},
 			"anthropic": {},
 		},
 		Cache: config.CacheConfig{Mode: "off"},

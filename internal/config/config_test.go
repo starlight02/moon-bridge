@@ -115,9 +115,9 @@ provider:
     deepseek:
       base_url: https://deepseek.example.test
       api_key: deepseek-key
-      deepseek_v4: true
       models:
-        deepseek-v4-pro: {}
+        deepseek-v4-pro:
+          deepseek_v4: true
     openai:
       base_url: https://openai.example.test
       api_key: openai-key

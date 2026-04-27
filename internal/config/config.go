@@ -83,6 +83,8 @@ type RouteEntry struct {
 	DefaultReasoningSummary  string
 	// WebSearch holds route-level web search config (overrides model and provider-level).
 	WebSearch WebSearchConfig
+	// DeepSeekV4 enables the DeepSeek V4 thinking extension for this route.
+	DeepSeekV4 bool
 }
 
 // ProviderDef defines a single upstream provider.
@@ -92,7 +94,6 @@ type ProviderDef struct {
 	Version          string
 	UserAgent        string
 	Protocol         string // "anthropic" (default) or "openai"
-	DeepSeekV4       bool
 	WebSearchSupport WebSearchSupport
 	WebSearchMaxUses int
 	TavilyAPIKey     string
@@ -119,6 +120,8 @@ type ModelMeta struct {
 	DefaultReasoningSummary  string
 	// WebSearch holds model-level web search config (overrides provider-level).
 	WebSearch WebSearchConfig
+	// DeepSeekV4 enables the DeepSeek V4 thinking extension for this model.
+	DeepSeekV4 bool
 }
 
 type ResponseProxyConfig struct {
@@ -193,9 +196,6 @@ func (cfg Config) validateTransform() error {
 			default:
 				return fmt.Errorf("providers.%s.protocol must be \"anthropic\" or \"openai\"", key)
 			}
-			if def.DeepSeekV4 && def.Protocol == "openai" {
-				return fmt.Errorf("providers.%s.deepseek_v4 requires anthropic protocol", key)
-			}
 		}
 		for alias, route := range cfg.Routes {
 			if alias == "" || route.Model == "" {
@@ -203,6 +203,11 @@ func (cfg Config) validateTransform() error {
 			}
 			if _, ok := cfg.ProviderDefs[route.Provider]; !ok {
 				return fmt.Errorf("routes.%s references unknown provider %q", alias, route.Provider)
+			}
+			if route.DeepSeekV4 {
+				if def, ok := cfg.ProviderDefs[route.Provider]; ok && def.Protocol == "openai" {
+					return fmt.Errorf("routes.%s: deepseek_v4 requires anthropic protocol (provider %s uses openai)", alias, route.Provider)
+				}
 			}
 		}
 		return nil
@@ -556,23 +561,27 @@ func boolOrDefault(value *bool, fallback bool) bool {
 	return *value
 }
 
-func (cfg Config) DeepSeekV4ForProvider(providerKey string) bool {
-	if def, ok := cfg.ProviderDefs[providerKey]; ok {
-		return def.DeepSeekV4
-	}
-	return false
-}
-
+// DeepSeekV4ForModel returns whether the DeepSeek V4 extension is enabled
+// for a given model alias. Resolution: route -> model catalog.
 func (cfg Config) DeepSeekV4ForModel(modelAlias string) bool {
+	if route, ok := cfg.Routes[modelAlias]; ok {
+		if route.DeepSeekV4 {
+			return true
+		}
+		if def, ok := cfg.ProviderDefs[route.Provider]; ok {
+			if meta, ok := def.Models[route.Model]; ok {
+				return meta.DeepSeekV4
+			}
+		}
+		return false
+	}
 	// Direct provider/model reference.
-	if provider, _ := ParseModelRef(modelAlias); provider != "" {
-		return cfg.DeepSeekV4ForProvider(provider)
-	}
-	if route, ok := cfg.Routes[modelAlias]; ok && route.Provider != "" {
-		return cfg.DeepSeekV4ForProvider(route.Provider)
-	}
-	if _, ok := cfg.ProviderDefs["default"]; ok {
-		return cfg.DeepSeekV4ForProvider("default")
+	if provider, upstream := ParseModelRef(modelAlias); provider != "" {
+		if def, ok := cfg.ProviderDefs[provider]; ok {
+			if meta, ok := def.Models[upstream]; ok {
+				return meta.DeepSeekV4
+			}
+		}
 	}
 	return false
 }

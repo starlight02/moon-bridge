@@ -18,7 +18,6 @@ provider:
       api_key: "replace-with-deepseek-api-key"
       version: "2023-06-01"
       user_agent: "moonbridge/1.0"
-      deepseek_v4: true
       web_search:
         support: "disabled"
       models:
@@ -28,6 +27,7 @@ provider:
           display_name: "DeepSeek V4 Pro"
           description: "DeepSeek reasoning model with extended thinking."
           default_reasoning_level: "medium"
+          deepseek_v4: true
           supported_reasoning_levels:
             - effort: "low"
               description: "Fast responses with lighter reasoning"

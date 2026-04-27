@@ -285,8 +285,8 @@ func TestResponsesHandlerReusesCodexSessionForDeepSeekThinking(t *testing.T) {
 	handler := server.New(server.Config{
 		Bridge: bridge.New(config.Config{
 			DefaultMaxTokens: 1024,
-			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro"}},
-			ProviderDefs:     map[string]config.ProviderDef{"default": {DeepSeekV4: true}},
+			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro", DeepSeekV4: true}},
+			ProviderDefs:     map[string]config.ProviderDef{"default": {}},
 			Cache:            config.CacheConfig{Mode: "off"},
 		}, cache.NewMemoryRegistry()),
 		Provider: provider,
