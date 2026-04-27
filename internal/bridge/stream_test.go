@@ -9,7 +9,6 @@ import (
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/config"
 	"moonbridge/internal/openai"
-	"moonbridge/internal/session"
 )
 
 func TestConvertStreamEventsConvertsTextLifecycle(t *testing.T) {
@@ -608,7 +607,7 @@ func TestDeepSeekThinkingIsStatefullyInjectedOnlyForToolCalls(t *testing.T) {
 		{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "tool_use"}},
 	}
 
-	sess := session.New()
+	sess := bridgeUnderTest.NewSession()
 	convertedEvents := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, sess)
 	completed := streamLifecycleResponse(t, convertedEvents, "response.completed")
 	// Reasoning item should be emitted alongside the tool call.
@@ -697,7 +696,7 @@ func TestDeepSeekSignatureOnlyThinkingIsReinjectedForToolCalls(t *testing.T) {
 		{Type: "message_stop"},
 	}
 
-	sess := session.New()
+	sess := bridgeUnderTest.NewSession()
 	convertedEvents := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, sess)
 
 	completed := streamLifecycleResponse(t, convertedEvents, "response.completed")
@@ -758,13 +757,13 @@ func TestDeepSeekThinkingIsInjectedForToolChainFinalAssistantText(t *testing.T) 
 		{Type: "message_stop"},
 	}
 
-	sess := session.New()
+	sess := bridgeUnderTest.NewSession()
 	nonPersistedEvents := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, sess)
 	nonPersistedCompleted := streamLifecycleResponse(t, nonPersistedEvents, "response.completed")
 	if len(nonPersistedCompleted.Output) != 1 || nonPersistedCompleted.Output[0].Type != "message" {
 		t.Fatalf("non-persisted completed output = %+v", nonPersistedCompleted.Output)
 	}
-	persistedEvents := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, session.New(), bridge.StreamOptions{
+	persistedEvents := bridgeUnderTest.ConvertStreamEventsWithContext(events, "gpt-test", bridge.ConversionContext{}, bridgeUnderTest.NewSession(), bridge.StreamOptions{
 		PersistFinalTextReasoning: true,
 	})
 	persistedCompleted := streamLifecycleResponse(t, persistedEvents, "response.completed")

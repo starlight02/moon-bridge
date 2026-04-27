@@ -9,20 +9,17 @@ import (
 
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/cache"
-	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/extensions/websearchinjected"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/openai"
 	"moonbridge/internal/session"
 )
 
-func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContext, sess *session.Session, deepseekV4Enabled bool) ([]anthropic.Message, []anthropic.ContentBlock, error) {
+func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContext, sess *session.Session, modelAlias string) ([]anthropic.Message, []anthropic.ContentBlock, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil, nil
 	}
-	if deepseekV4Enabled {
-		raw = deepseekv4.StripReasoningContent(raw)
-	}
+	raw = bridge.exts.PreprocessInput(modelAlias, raw)
 	trimmed := strings.TrimSpace(string(raw))
 	if strings.HasPrefix(trimmed, "\"") {
 		var text string
@@ -40,8 +37,11 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 		return nil, nil, invalidRequest("input array is invalid", "input", "invalid_request_error")
 	}
 
-	// Get the per-request DeepSeek state from the session.
-	ds := perRequestDeepSeek(sess, deepseekV4Enabled)
+	// Get per-session extension data.
+	var extData map[string]any
+	if sess != nil {
+		extData = sess.ExtensionData
+	}
 
 	messages := make([]anthropic.Message, 0, len(items))
 	system := make([]anthropic.ContentBlock, 0)
@@ -52,18 +52,11 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 		case item.Phase == "commentary":
 			continue
 		case item.Type == "reasoning":
-			if deepseekV4Enabled && len(item.Summary) > 0 {
-				pendingReasoningText = item.Summary[0].Text
-			}
+			pendingReasoningText = bridge.exts.ExtractReasoningFromSummary(modelAlias, item.Summary)
 			continue
 		case item.Type == "function_call":
 			seenToolHistory = true
-			if deepseekV4Enabled && pendingReasoningText != "" {
-				prependThinkingBlock(&messages, pendingReasoningText)
-				pendingReasoningText = ""
-			} else if ds != nil {
-				ds.PrependCachedForToolUse(&messages, firstNonEmpty(item.CallID, item.ID))
-			}
+			messages, pendingReasoningText = bridge.prependThinking(modelAlias, messages, pendingReasoningText, firstNonEmpty(item.CallID, item.ID), extData)
 			toolName := context.AnthropicFunctionToolName(item.Namespace, item.Name)
 			toolInput := toolInputFromArguments(item.Arguments)
 			appendAssistantBlock(&messages, anthropic.ContentBlock{
@@ -74,12 +67,7 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 			})
 		case item.Type == "custom_tool_call":
 			seenToolHistory = true
-			if deepseekV4Enabled && pendingReasoningText != "" {
-				prependThinkingBlock(&messages, pendingReasoningText)
-				pendingReasoningText = ""
-			} else if ds != nil {
-				ds.PrependCachedForToolUse(&messages, firstNonEmpty(item.CallID, item.ID))
-			}
+			messages, pendingReasoningText = bridge.prependThinking(modelAlias, messages, pendingReasoningText, firstNonEmpty(item.CallID, item.ID), extData)
 			toolName := item.Name
 			toolInput := json.RawMessage(item.Arguments)
 			if strings.TrimSpace(item.Arguments) == "" {
@@ -95,12 +83,7 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 			})
 		case item.Type == "local_shell_call":
 			seenToolHistory = true
-			if deepseekV4Enabled && pendingReasoningText != "" {
-				prependThinkingBlock(&messages, pendingReasoningText)
-				pendingReasoningText = ""
-			} else if ds != nil {
-				ds.PrependCachedForToolUse(&messages, firstNonEmpty(item.CallID, item.ID))
-			}
+			messages, pendingReasoningText = bridge.prependThinking(modelAlias, messages, pendingReasoningText, firstNonEmpty(item.CallID, item.ID), extData)
 			appendAssistantBlock(&messages, anthropic.ContentBlock{
 				Type:  "tool_use",
 				ID:    firstNonEmpty(item.CallID, item.ID),
@@ -124,14 +107,14 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context ConversionContex
 				continue
 			}
 			// Inject cached thinking block from type: "reasoning" input item.
-			if deepseekV4Enabled && pendingReasoningText != "" {
+			if pendingReasoningText != "" {
 				blocks = append([]anthropic.ContentBlock{{
 					Type:     "thinking",
 					Thinking: pendingReasoningText,
 				}}, blocks...)
 				pendingReasoningText = ""
-			} else if seenToolHistory && ds != nil {
-				blocks = ds.PrependCachedForAssistantText(blocks)
+			} else if seenToolHistory {
+				blocks = bridge.exts.PrependThinkingToAssistant(modelAlias, blocks, extData)
 			}
 			messages = append(messages, anthropic.Message{Role: "assistant", Content: blocks})
 		default:
@@ -410,16 +393,16 @@ func lastCacheableContentIndex(content []anthropic.ContentBlock) int {
 	}
 	return -1
 }
-
-// perRequestDeepSeek returns the DeepSeek state from a session if DeepSeek V4 is enabled.
-func perRequestDeepSeek(sess *session.Session, deepseekV4Enabled bool) *deepseekv4.State {
-	if !deepseekV4Enabled {
-		return nil
+// prependThinking handles thinking block injection before tool_result messages.
+// If pendingReasoningText is non-empty, it prepends a thinking block directly.
+// Otherwise, it delegates to extensions for cached thinking injection.
+func (bridge *Bridge) prependThinking(modelAlias string, messages []anthropic.Message, pendingReasoningText string, toolCallID string, extData map[string]any) ([]anthropic.Message, string) {
+	if pendingReasoningText != "" {
+		prependThinkingBlock(&messages, pendingReasoningText)
+		return messages, ""
 	}
-	if sess == nil {
-		return nil
-	}
-	return sess.DeepSeek
+	messages = bridge.exts.PrependThinkingToMessages(modelAlias, messages, toolCallID, extData)
+	return messages, ""
 }
 
 type inputItem struct {

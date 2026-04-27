@@ -12,6 +12,8 @@ import (
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
+	"moonbridge/internal/extension"
+	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/provider"
 	"moonbridge/internal/proxy"
@@ -90,14 +92,19 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 		fallbackProvider = defaultClient
 	}
 
+	// Register extensions.
+	exts := extension.NewRegistry()
+	exts.Register(deepseekv4.NewHook(cfg.DeepSeekV4ForModel))
+
 	handler := server.New(server.Config{
-		Bridge:      bridge.New(cfg, cache.NewMemoryRegistry()),
+		Bridge:      bridge.New(cfg, cache.NewMemoryRegistry(), exts),
 		Provider:    fallbackProvider,
 		ProviderMgr: providerMgr,
 		Tracer:      tracer,
 		TraceErrors: errors,
 		Stats:       sessionStats,
 		AppConfig:   cfg,
+		Extensions:  exts,
 	})
 
 	return runHTTPServer(ctx, cfg.Addr, handler, errors, sessionStats)

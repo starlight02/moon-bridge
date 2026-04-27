@@ -16,6 +16,8 @@ import (
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
+	"moonbridge/internal/extension"
+	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/provider"
 	"moonbridge/internal/server"
@@ -83,7 +85,7 @@ func TestResponsesHandlerReturnsOpenAIResponse(t *testing.T) {
 			DefaultMaxTokens: 1024,
 			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
 			Cache:            config.CacheConfig{Mode: "off"},
-		}, cache.NewMemoryRegistry()),
+		}, cache.NewMemoryRegistry(), nil),
 		Provider: provider,
 	})
 
@@ -120,7 +122,7 @@ func TestResponsesHandlerWritesTraceFile(t *testing.T) {
 			DefaultMaxTokens: 1024,
 			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
 			Cache:            config.CacheConfig{Mode: "off"},
-		}, cache.NewMemoryRegistry()),
+		}, cache.NewMemoryRegistry(), nil),
 		Provider: provider,
 		Tracer:   mbtrace.New(mbtrace.Config{Enabled: true, Root: traceRoot, SessionID: "session-test"}),
 	})
@@ -190,7 +192,7 @@ func TestResponsesHandlerAcceptsCodexResponsesPath(t *testing.T) {
 			DefaultMaxTokens: 1024,
 			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
 			Cache:            config.CacheConfig{Mode: "off"},
-		}, cache.NewMemoryRegistry()),
+		}, cache.NewMemoryRegistry(), nil),
 		Provider: provider,
 	})
 
@@ -210,7 +212,7 @@ func TestResponsesHandlerRejectsUnsupportedToolType(t *testing.T) {
 		Bridge: bridge.New(config.Config{
 			DefaultMaxTokens: 1024,
 			Cache:            config.CacheConfig{Mode: "off"},
-		}, cache.NewMemoryRegistry()),
+		}, cache.NewMemoryRegistry(), nil),
 		Provider: &fakeProvider{},
 	})
 
@@ -243,7 +245,7 @@ func TestResponsesHandlerStreamsOpenAIEvents(t *testing.T) {
 		Bridge: bridge.New(config.Config{
 			DefaultMaxTokens: 1024,
 			Cache:            config.CacheConfig{Mode: "off"},
-		}, cache.NewMemoryRegistry()),
+		}, cache.NewMemoryRegistry(), nil),
 		Provider: provider,
 	})
 
@@ -282,14 +284,18 @@ func TestResponsesHandlerReusesCodexSessionForDeepSeekThinking(t *testing.T) {
 			{Type: "message_stop"},
 		},
 	}
+	cfg := config.Config{
+		DefaultMaxTokens: 1024,
+		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro", DeepSeekV4: true}},
+		ProviderDefs:     map[string]config.ProviderDef{"default": {}},
+		Cache:            config.CacheConfig{Mode: "off"},
+	}
+	exts := extension.NewRegistry()
+	exts.Register(deepseekv4.NewHook(cfg.DeepSeekV4ForModel))
 	handler := server.New(server.Config{
-		Bridge: bridge.New(config.Config{
-			DefaultMaxTokens: 1024,
-			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro", DeepSeekV4: true}},
-			ProviderDefs:     map[string]config.ProviderDef{"default": {}},
-			Cache:            config.CacheConfig{Mode: "off"},
-		}, cache.NewMemoryRegistry()),
-		Provider: provider,
+		Bridge:     bridge.New(cfg, cache.NewMemoryRegistry(), exts),
+		Provider:   provider,
+		Extensions: exts,
 	})
 
 	firstRequest := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"inspect","stream":true}`))
@@ -393,7 +399,7 @@ func TestResponsesHandlerPassesOpenAIProtocolThroughWithUpstreamModel(t *testing
 				"image": {Provider: "openai", Model: "gpt-image-1.5"},
 			},
 			Cache: config.CacheConfig{Mode: "off"},
-		}, cache.NewMemoryRegistry()),
+		}, cache.NewMemoryRegistry(), nil),
 		ProviderMgr:      providerMgr,
 		OpenAIHTTPClient: httpClient,
 		Stats:            sessionStats,

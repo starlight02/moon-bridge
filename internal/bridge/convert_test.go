@@ -8,6 +8,8 @@ import (
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
+	"moonbridge/internal/extension"
+	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/openai"
 )
 
@@ -28,7 +30,9 @@ func testBridge() *bridge.Bridge {
 }
 
 func testBridgeWithConfig(cfg config.Config) *bridge.Bridge {
-	return bridge.New(cfg, cache.NewMemoryRegistry())
+	exts := extension.NewRegistry()
+	exts.Register(deepseekv4.NewHook(cfg.DeepSeekV4ForModel))
+	return bridge.New(cfg, cache.NewMemoryRegistry(), exts)
 }
 
 func testBridgeWithWebSearchDisabled() *bridge.Bridge {
@@ -115,7 +119,7 @@ func TestToAnthropicAutomaticCacheAddsExplicitBreakpoints(t *testing.T) {
 			MinCacheTokens:           1,
 			MinBreakpointTokens:      1,
 		},
-	}, cache.NewMemoryRegistry())
+	}, cache.NewMemoryRegistry(), nil)
 
 	converted, plan, err := bridgeUnderTest.ToAnthropic(openai.ResponsesRequest{
 		Model:        "gpt-test",
@@ -154,7 +158,7 @@ func TestToAnthropicCanDisableTopLevelAutomaticCache(t *testing.T) {
 			MinCacheTokens:           1,
 			MinBreakpointTokens:      1,
 		},
-	}, cache.NewMemoryRegistry())
+	}, cache.NewMemoryRegistry(), nil)
 
 	converted, plan, err := bridgeUnderTest.ToAnthropic(openai.ResponsesRequest{
 		Model:        "gpt-test",

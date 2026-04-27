@@ -16,7 +16,7 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 		return nil
 	}
 	converter.resetBlockState(index)
-	if converter.deepseek != nil && converter.deepseek.Start(index, block) {
+	if converter.bridge.exts.OnStreamBlockStart(converter.model, index, block, converter.extStreamStates) {
 		return nil
 	}
 	switch block.Type {
@@ -36,9 +36,7 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 				Action: localShellActionFromRaw(block.Input),
 			}
 			converter.itemIDs[index] = item.ID
-			if converter.deepseek != nil {
-				converter.deepseek.RecordToolCall(block.ID)
-			}
+			converter.bridge.exts.OnStreamToolCall(converter.model, block.ID, converter.extStreamStates)
 			converter.addOutput(index, item)
 			return append(events, converter.outputItem("response.output_item.added", index, item))
 		}
@@ -57,9 +55,7 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 			if len(block.Input) > 0 && string(block.Input) != "{}" {
 				converter.customToolInitialInputs[index] = string(block.Input)
 			}
-			if converter.deepseek != nil {
-				converter.deepseek.RecordToolCall(block.ID)
-			}
+			converter.bridge.exts.OnStreamToolCall(converter.model, block.ID, converter.extStreamStates)
 			converter.addOutput(index, item)
 			return append(events, converter.outputItem("response.output_item.added", index, item))
 		}
@@ -74,9 +70,7 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 			Status:    "in_progress",
 		}
 		converter.itemIDs[index] = item.ID
-		if converter.deepseek != nil {
-			converter.deepseek.RecordToolCall(block.ID)
-		}
+		converter.bridge.exts.OnStreamToolCall(converter.model, block.ID, converter.extStreamStates)
 		converter.addOutput(index, item)
 		return append(events, converter.outputItem("response.output_item.added", index, item))
 	case "server_tool_use":
@@ -92,7 +86,7 @@ func (converter *streamConverter) contentBlockStart(event anthropic.StreamEvent)
 
 func (converter *streamConverter) contentBlockDelta(event anthropic.StreamEvent) []openai.StreamEvent {
 	index := event.Index
-	if converter.deepseek != nil && converter.deepseek.Delta(index, event.Delta) {
+	if converter.bridge.exts.OnStreamBlockDelta(converter.model, index, event.Delta, converter.extStreamStates) {
 		return nil
 	}
 	switch event.Delta.Type {
@@ -170,8 +164,8 @@ func (converter *streamConverter) contentBlockDelta(event anthropic.StreamEvent)
 
 func (converter *streamConverter) contentBlockStop(event anthropic.StreamEvent) []openai.StreamEvent {
 	index := event.Index
-	if converter.deepseek != nil && converter.deepseek.Stop(index) {
-		converter.pendingReasoningText = converter.deepseek.CompletedThinkingText()
+	if consumed, reasoningText := converter.bridge.exts.OnStreamBlockStop(converter.model, index, converter.extStreamStates); consumed {
+		converter.pendingReasoningText = reasoningText
 		return nil
 	}
 	if text, ok := converter.contentText[index]; ok {

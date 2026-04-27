@@ -1,34 +1,36 @@
 // Package session manages request or client-session state, isolating mutable
-// state such as DeepSeek V4 thinking caches across unrelated requests.
+// state such as extension caches across unrelated requests.
 package session
 
 import (
 	"crypto/rand"
 	"encoding/hex"
 	"time"
-
-	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 )
 
 // Session holds mutable state that should be isolated across unrelated
 // conversations (e.g., thinking blocks from one conversation leaking into
 // another).
 type Session struct {
-	ID        string
-	DeepSeek  *deepseekv4.State
-	CreatedAt time.Time
+	ID            string
+	ExtensionData map[string]any
+	CreatedAt     time.Time
 }
 
-// New creates a new Session with a unique ID and initialised state.
+// New creates a new Session with a unique ID.
+// Call InitExtensions after creation to populate extension state.
 func New() *Session {
 	id := make([]byte, 16)
 	_, _ = rand.Read(id)
-	s := &Session{
+	return &Session{
 		ID:        hex.EncodeToString(id),
 		CreatedAt: time.Now(),
 	}
-	s.DeepSeek = deepseekv4.NewState()
-	return s
+}
+
+// InitExtensions populates ExtensionData from a registry's NewSessionData.
+func (s *Session) InitExtensions(data map[string]any) {
+	s.ExtensionData = data
 }
 
 // NewWithID creates a Session with the given ID (useful for testing).

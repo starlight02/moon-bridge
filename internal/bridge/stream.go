@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"moonbridge/internal/anthropic"
-	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/openai"
 	"moonbridge/internal/session"
 )
@@ -19,7 +18,6 @@ type StreamOptions struct {
 }
 
 func (bridge *Bridge) ConvertStreamEventsWithContext(events []anthropic.StreamEvent, model string, context ConversionContext, sess *session.Session, opts ...StreamOptions) []openai.StreamEvent {
-	deepseekV4Enabled := bridge.cfg.DeepSeekV4ForModel(model)
 	var opt StreamOptions
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -38,18 +36,16 @@ func (bridge *Bridge) ConvertStreamEventsWithContext(events []anthropic.StreamEv
 		webSearchInputs:         map[int]string{},
 		itemIDs:                 map[int]string{},
 		outputIndexes:           map[int]int{},
-	}
-	if deepseekV4Enabled && sess != nil && sess.DeepSeek != nil {
-		converter.deepseek = deepseekv4.NewStreamState()
+		extStreamStates:         bridge.exts.NewStreamStates(model),
 	}
 	var converted []openai.StreamEvent
 	for _, event := range events {
 		converted = append(converted, converter.convert(event)...)
 	}
 
-	// After stream completes, feed the result back to the session's DeepSeek state.
-	if converter.deepseek != nil && sess != nil && sess.DeepSeek != nil && deepseekV4Enabled {
-		sess.DeepSeek.RememberStreamResult(converter.deepseek, converter.response.OutputText)
+	// Let extensions persist stream state back to the session.
+	if sess != nil {
+		bridge.exts.OnStreamComplete(model, converter.extStreamStates, converter.response.OutputText, sess.ExtensionData)
 	}
 
 	return converted
@@ -68,13 +64,13 @@ type streamConverter struct {
 	customToolNames         map[int]string
 	webSearchActions        map[int]*openai.ToolAction
 	webSearchInputs         map[int]string
-	deepseek                *deepseekv4.StreamState
 	pendingReasoningText    string
 	reasoningEmitted        bool
 	persistTextReasoning    bool
 	hasToolCalls            bool
 	itemIDs                 map[int]string
 	outputIndexes           map[int]int
+	extStreamStates         map[string]any
 }
 
 func (converter *streamConverter) convert(event anthropic.StreamEvent) []openai.StreamEvent {
@@ -159,9 +155,7 @@ func (converter *streamConverter) resetBlockState(index int) {
 	delete(converter.webSearchInputs, index)
 	delete(converter.itemIDs, index)
 	delete(converter.outputIndexes, index)
-	if converter.deepseek != nil {
-		converter.deepseek.Reset(index)
-	}
+	converter.bridge.exts.ResetStreamBlock(converter.model, index, converter.extStreamStates)
 }
 
 func (converter *streamConverter) hasOutput(index int) bool {
@@ -228,7 +222,7 @@ func (converter *streamConverter) outputItemAt(event string, outputIndex int, it
 }
 
 func (converter *streamConverter) emitPendingReasoningItem() []openai.StreamEvent {
-	if converter.deepseek == nil || converter.reasoningEmitted || converter.pendingReasoningText == "" {
+	if converter.reasoningEmitted || converter.pendingReasoningText == "" {
 		return nil
 	}
 	outputIndex := len(converter.response.Output)

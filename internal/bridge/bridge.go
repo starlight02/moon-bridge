@@ -11,7 +11,7 @@ import (
 	"moonbridge/internal/anthropic"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
-	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
+	"moonbridge/internal/extension"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/openai"
 	"moonbridge/internal/session"
@@ -20,6 +20,7 @@ import (
 type Bridge struct {
 	cfg      config.Config
 	registry *cache.MemoryRegistry
+	exts     *extension.Registry
 }
 
 type ConversionContext struct {
@@ -142,11 +143,14 @@ func (err *RequestError) Error() string {
 	return err.Message
 }
 
-func New(cfg config.Config, registry *cache.MemoryRegistry) *Bridge {
+func New(cfg config.Config, registry *cache.MemoryRegistry, exts *extension.Registry) *Bridge {
 	if registry == nil {
 		registry = cache.NewMemoryRegistry()
 	}
-	return &Bridge{cfg: cfg, registry: registry}
+	if exts == nil {
+		exts = extension.NewRegistry()
+	}
+	return &Bridge{cfg: cfg, registry: registry, exts: exts}
 }
 
 // RequestOptions carries per-request overrides resolved by the server layer.
@@ -161,7 +165,7 @@ type RequestOptions struct {
 }
 
 // ToAnthropic converts an OpenAI Responses request to an Anthropic MessageRequest.
-// Takes an optional session for per-request state (DeepSeek thinking cache).
+// Takes an optional session for per-request extension state.
 func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest, sess *session.Session, opts ...RequestOptions) (anthropic.MessageRequest, cache.CacheCreationPlan, error) {
 	var opt RequestOptions
 	if len(opts) > 0 {
@@ -175,8 +179,7 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest, sess *session
 	}
 
 	conversionContext := bridge.ConversionContext(request)
-	deepseekV4Enabled := bridge.cfg.DeepSeekV4ForModel(request.Model)
-	messages, system, err := bridge.convertInput(request.Input, conversionContext, sess, deepseekV4Enabled)
+	messages, system, err := bridge.convertInput(request.Input, conversionContext, sess, request.Model)
 	if err != nil {
 		return anthropic.MessageRequest{}, cache.CacheCreationPlan{}, err
 	}
@@ -221,9 +224,7 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest, sess *session
 		Metadata:      request.Metadata,
 	}
 
-	if deepseekV4Enabled {
-		deepseekv4.ToAnthropicRequest(&converted, request.Reasoning)
-	}
+	bridge.exts.PostConvertRequest(request.Model, &converted, request.Reasoning)
 
 	plan, err := bridge.planCache(request, converted)
 	if err != nil {
@@ -264,7 +265,6 @@ func (bridge *Bridge) FromAnthropicWithPlan(response anthropic.MessageResponse, 
 
 func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.MessageResponse, model string, plan cache.CacheCreationPlan, context ConversionContext, sess *session.Session) openai.Response {
 	log := logger.L().With("model", model)
-	deepseekV4Enabled := bridge.cfg.DeepSeekV4ForModel(model)
 	log.Debug("converting Anthropic response to OpenAI", "provider_id", response.ID, "stop_reason", response.StopReason)
 	registryKey := plan.PrefixKey
 	if registryKey == "" {
@@ -278,8 +278,8 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 		}, response.Usage.InputTokens, parseTTL(plan.TTL))
 		log.Debug("updated cache registry", "key", registryKey, "input_tokens", response.Usage.InputTokens, "cache_creation", response.Usage.CacheCreationInputTokens, "cache_read", response.Usage.CacheReadInputTokens)
 	}
-	if sess != nil && sess.DeepSeek != nil && deepseekV4Enabled {
-		sess.DeepSeek.RememberFromContent(response.Content)
+	if sess != nil {
+		bridge.exts.RememberResponseContent(model, response.Content, sess.ExtensionData)
 	}
 
 	output := make([]openai.OutputItem, 0, len(response.Content))
@@ -289,16 +289,14 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 	hasToolCalls := false
 
 	for index, block := range response.Content {
-		switch block.Type {
-		case "thinking", "reasoning_content":
-			if deepseekV4Enabled {
-				thinkingText += deepseekv4.ExtractReasoningContent([]anthropic.ContentBlock{block})
-			}
+		// Let extensions filter/extract reasoning from content blocks.
+		skip, rt := bridge.exts.OnResponseContent(model, block)
+		thinkingText += rt
+		if skip {
 			continue
+		}
+		switch block.Type {
 		case "text":
-			if deepseekV4Enabled && deepseekv4.IsReasoningContentBlock(&block) {
-				continue
-			}
 			part := openai.ContentPart{Type: "output_text", Text: block.Text}
 			messageContent = append(messageContent, part)
 			outputText.WriteString(block.Text)
@@ -372,10 +370,8 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 		})
 	}
 
-	// Emit reasoning output item for DeepSeek thinking when tool calls were made.
-	// This carries the thinking text back to Codex via the reasoning item summary,
-	// allowing it to be replayed in subsequent requests (preventing DeepSeek 400 errors).
-	if deepseekV4Enabled && thinkingText != "" && hasToolCalls {
+	// Let extensions inject reasoning items into the output.
+	if thinkingText != "" && hasToolCalls {
 		reasoningItem := openai.OutputItem{
 			Type: "reasoning",
 			Summary: []openai.ReasoningItemSummary{{
@@ -412,14 +408,14 @@ func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.Message
 }
 
 func (bridge *Bridge) ErrorResponse(err error) (int, openai.ErrorResponse) {
-	return bridge.errorResponse(err, false)
+	return bridge.errorResponse(err, "")
 }
 
 func (bridge *Bridge) ErrorResponseForModel(model string, err error) (int, openai.ErrorResponse) {
-	return bridge.errorResponse(err, bridge.cfg.DeepSeekV4ForModel(model))
+	return bridge.errorResponse(err, model)
 }
 
-func (bridge *Bridge) errorResponse(err error, deepseekV4Enabled bool) (int, openai.ErrorResponse) {
+func (bridge *Bridge) errorResponse(err error, model string) (int, openai.ErrorResponse) {
 	var requestError *RequestError
 	if errors.As(err, &requestError) {
 		return requestError.Status, openai.ErrorResponse{Error: openai.ErrorObject{
@@ -431,9 +427,7 @@ func (bridge *Bridge) errorResponse(err error, deepseekV4Enabled bool) (int, ope
 	}
 	if providerError, ok := anthropic.IsProviderError(err); ok {
 		msg := providerError.Error()
-		if deepseekV4Enabled && isDeepSeekThinkingHistoryError(msg) {
-			msg = "Missing required thinking blocks - ensure reasoning items are preserved in conversation history for tool-call turns."
-		}
+		msg = bridge.exts.TransformError(model, msg)
 		return providerError.OpenAIStatus(), openai.ErrorResponse{Error: openai.ErrorObject{
 			Message: msg,
 			Type:    providerError.OpenAIType(),
@@ -453,8 +447,9 @@ func (bridge *Bridge) ProviderFor(modelAlias string) string {
 	return bridge.cfg.ProviderFor(modelAlias)
 }
 
-// isDeepSeekThinkingHistoryError detects the DeepSeek error that fires when
-// assistant messages lack required thinking blocks in thinking mode.
-func isDeepSeekThinkingHistoryError(msg string) bool {
-	return strings.Contains(msg, "content[].thinking") && strings.Contains(msg, "thinking mode")
+// NewSession creates a session with extension data initialized.
+func (bridge *Bridge) NewSession() *session.Session {
+	sess := session.New()
+	sess.InitExtensions(bridge.exts.NewSessionData())
+	return sess
 }

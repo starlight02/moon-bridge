@@ -7,6 +7,8 @@ import (
 	"moonbridge/internal/bridge"
 	"moonbridge/internal/cache"
 	"moonbridge/internal/config"
+	"moonbridge/internal/extension"
+	deepseekv4 "moonbridge/internal/extensions/deepseek_v4"
 	"moonbridge/internal/openai"
 )
 
@@ -223,7 +225,7 @@ func TestToAnthropicConvertsCodexNamespaceFunctionHistoryAndToolChoice(t *testin
 }
 
 func TestToAnthropicAppliesDeepSeekV4OnlyForRoutedProvider(t *testing.T) {
-	bridgeUnderTest := bridge.New(config.Config{
+	cfg := config.Config{
 		DefaultMaxTokens: 1024,
 		Routes: map[string]config.RouteEntry{
 			"deep":   {Provider: "deepseek", Model: "deepseek-v4-pro", DeepSeekV4: true},
@@ -234,7 +236,10 @@ func TestToAnthropicAppliesDeepSeekV4OnlyForRoutedProvider(t *testing.T) {
 			"anthropic": {},
 		},
 		Cache: config.CacheConfig{Mode: "off"},
-	}, cache.NewMemoryRegistry())
+	}
+	exts := extension.NewRegistry()
+	exts.Register(deepseekv4.NewHook(cfg.DeepSeekV4ForModel))
+	bridgeUnderTest := bridge.New(cfg, cache.NewMemoryRegistry(), exts)
 	temperature := 0.2
 	topP := 0.9
 	base := openai.ResponsesRequest{
