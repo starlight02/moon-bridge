@@ -154,6 +154,25 @@ provider:
 
 在具体 Provider 模型下设置 `deepseek_v4: true` 可启用 DeepSeek V4 专用兼容逻辑，包括 reasoning_content 剥离与重注入、thinking 回放、推理输出展示等。推理档位使用与 Codex 兼容的 `default_reasoning_level` / `supported_reasoning_levels` 元数据表达；Transform 会把请求里的 `reasoning.effort` 映射到 DeepSeek Anthropic 兼容参数 `output_config.effort`，其中 `xhigh` 会映射为 DeepSeek 的 `max`。详见 [docs/deepseek-v4.md](docs/deepseek-v4.md)。
 
+### 日志与系统提示
+
+`config.yml` 支持配置日志级别和格式：
+
+```yaml
+log:
+  level: "info"   # debug / info / warn / error
+  format: "text"  # text / json
+```
+
+`system_prompt` 可设置全局系统提示词，会注入到每次 Transform 请求的 Anthropic `system` 块中：
+
+```yaml
+system_prompt: |
+  自定义系统提示内容
+```
+
+日志格式支持 `text`（默认，带有 slog 格式的红色信息）和 `json`（结构化 JSON 行）。详见 `config.example.yml` 中的注释。
+
 ### 调试抓包
 
 打开 `trace_requests: true` 后，Transform 的 Anthropic 转换请求和 Capture 模式的代理流量会按模式写入 `trace/` 目录，方便排查问题。API Key 等敏感 Header 会自动脱敏；OpenAI 协议直通 Provider 当前主要保留上游响应和 usage 日志，错误场景会写入 trace。

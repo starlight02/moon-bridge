@@ -12,6 +12,12 @@ cp config.example.yml config.yml
 # 并在各 Provider 的 models 中配置模型别名、上游模型名和可选价格。
 ```
 
+支持的配置字段还包括：
+
+- `log.level`：日志级别（`debug` / `info` / `warn` / `error`）
+- `log.format`：日志格式（`text` / `json`）
+- `system_prompt`：全局系统提示词，注入到 Transform 请求的 Anthropic `system` 块
+
 `config.yml` 已在 `.gitignore` 中，不会提交到仓库。也可通过 `--config` 参数指定其他路径
 注：`MOONBRIDGE_CONFIG` 不再被读取，请使用 `--config` 标志。
 
@@ -22,7 +28,9 @@ cp config.example.yml config.yml
 ├── cmd/moonbridge/          # 命令行入口
 ├── internal/
 │   ├── app/                 # 应用组装
-│   ├── config/              # YAML 配置解析
+│   ├── config/
+│   │   ├── config.go        # 运行时方法 + DTO
+│   │   └── config_loader.go # YAML 加载和校验
 │   ├── bridge/              # 协议转换核心
 │   ├── extensions/          # Provider 扩展（如 DeepSeek V4）
 │   ├── cache/               # Prompt cache 规划

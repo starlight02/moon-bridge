@@ -89,7 +89,7 @@ flowchart LR
 集中管理 YAML 配置。
 
 - 使用 `yaml.v3` `KnownFields(true)` 严格解析，防止字段拼写错误。
-- 校验 mode、多 Provider 必填字段（`provider.providers.*.base_url` / `api_key` / `protocol`）、模型路由和缓存参数。
+- 校验 `mode`、`log`（level/format）、`system_prompt`、多 Provider 必填字段（`provider.providers.*.base_url` / `api_key` / `protocol`）、模型路由和缓存参数。
 - 提供 `ModelFor()` 将客户端模型别名映射为上游真实模型名，并读取 web search 配置控制搜索工具是否自动探测、强制启用、禁用或 server-side injected。
 - web search 配置支持三级覆盖：route → model（provider catalog）→ provider → 全局。推荐在 `providers.<key>.models.<name>.web_search` 按模型单独配置。
 - `WebSearchForModel()` 按模型别名解析 web search 配置（route → model → provider → global）；`WebSearchMaxUsesForModel()` / `WebSearchTavilyKeyForModel()` / `WebSearchFirecrawlKeyForModel()` / `WebSearchMaxRoundsForModel()` 同理。
