@@ -71,14 +71,19 @@ func TestToAnthropicRequestClearsTemperatureAndTopP(t *testing.T) {
 }
 
 func TestToAnthropicRequestMapsReasoningEffort(t *testing.T) {
-	for _, effort := range []string{"high", "max"} {
+	tests := map[string]string{
+		"high":  "high",
+		"xhigh": "max",
+		"max":   "max",
+	}
+	for effort, want := range tests {
 		req := anthropic.MessageRequest{Model: "deepseek-v4-pro"}
 		ToAnthropicRequest(&req, map[string]any{"effort": effort})
 		if req.Model != "deepseek-v4-pro" {
 			t.Fatalf("Model = %q", req.Model)
 		}
-		if req.OutputConfig == nil || req.OutputConfig.Effort != effort {
-			t.Fatalf("OutputConfig = %+v, want effort %q", req.OutputConfig, effort)
+		if req.OutputConfig == nil || req.OutputConfig.Effort != want {
+			t.Fatalf("OutputConfig = %+v, want effort %q", req.OutputConfig, want)
 		}
 		if req.Thinking != nil {
 			t.Fatalf("expected no thinking mapping, got %+v", req.Thinking)

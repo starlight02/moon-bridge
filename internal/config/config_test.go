@@ -122,8 +122,8 @@ provider:
           supported_reasoning_levels:
             - effort: high
               description: High reasoning effort
-            - effort: max
-              description: Max reasoning effort
+            - effort: xhigh
+              description: Extra high reasoning effort
     openai:
       base_url: https://openai.example.test
       api_key: openai-key

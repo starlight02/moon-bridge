@@ -25,14 +25,14 @@ provider:
           context_window: 1000000
           max_output_tokens: 384000
           display_name: "DeepSeek V4 Pro"
-          description: "DeepSeek V4 with selectable high/max reasoning effort."
+          description: "DeepSeek V4 with selectable high/xhigh reasoning effort."
           deepseek_v4: true
           default_reasoning_level: "high"
           supported_reasoning_levels:
             - effort: "high"
               description: "High reasoning effort"
-            - effort: "max"
-              description: "Max reasoning effort"
+            - effort: "xhigh"
+              description: "Extra high reasoning effort (maps to DeepSeek max)"
           supports_reasoning_summaries: true
           default_reasoning_summary: "auto"
           web_search:

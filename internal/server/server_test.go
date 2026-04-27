@@ -270,7 +270,7 @@ func TestBuildModelInfoPreservesReasoningLevelsForDeepSeekV4(t *testing.T) {
 		DefaultReasoningLevel: "high",
 		SupportedReasoningLevels: []config.ReasoningLevelPreset{
 			{Effort: "high", Description: "High reasoning effort"},
-			{Effort: "max", Description: "Max reasoning effort"},
+			{Effort: "xhigh", Description: "Extra high reasoning effort"},
 		},
 	})
 
@@ -280,7 +280,7 @@ func TestBuildModelInfoPreservesReasoningLevelsForDeepSeekV4(t *testing.T) {
 	if len(info.SupportedReasoningLevels) != 2 {
 		t.Fatalf("SupportedReasoningLevels = %+v, want two levels", info.SupportedReasoningLevels)
 	}
-	if info.SupportedReasoningLevels[0].Effort != "high" || info.SupportedReasoningLevels[1].Effort != "max" {
+	if info.SupportedReasoningLevels[0].Effort != "high" || info.SupportedReasoningLevels[1].Effort != "xhigh" {
 		t.Fatalf("SupportedReasoningLevels = %+v", info.SupportedReasoningLevels)
 	}
 }

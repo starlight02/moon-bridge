@@ -294,7 +294,7 @@ func TestToAnthropicAppliesDeepSeekV4SamplingQuirksOnlyForRoutedProvider(t *test
 		Input:       json.RawMessage(`"hello"`),
 		Temperature: &temperature,
 		TopP:        &topP,
-		Reasoning:   map[string]any{"effort": "max"},
+		Reasoning:   map[string]any{"effort": "xhigh"},
 	}
 
 	deepRequest := base

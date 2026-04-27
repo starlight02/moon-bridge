@@ -153,7 +153,7 @@ func reasoningEffort(reasoning map[string]any) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
 	case "high":
 		return "high", true
-	case "max":
+	case "xhigh", "max":
 		return "max", true
 	default:
 		return "", false

@@ -93,7 +93,7 @@ go test ./internal/e2e/ -v -count=1
 - Usage / Billing：验证每请求 INFO 使用上游实际模型名、`Billing` 为 session 累计值、`Input` 展示为 `input_tokens + cache_read_input_tokens`。
 - Cache planner：验证各种配置组合（off / automatic / explicit / hybrid）下的断点注入与注册表状态管理。
 - DTO：验证 `input_tokens_details.cached_tokens` 在值为 `0` 时仍被序列化。
-- DeepSeek V4：验证 reasoning_content 剥离、请求级 thinking state、标准 `reasoning.effort` 映射、采样参数清理、流式 delta 收集等逻辑。
+- DeepSeek V4：验证 reasoning_content 剥离、请求级 thinking state、`high/xhigh` 到 DeepSeek `high/max` 的映射、采样参数清理、流式 delta 收集等逻辑。
 
 ## Debug
 
